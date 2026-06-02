@@ -1,57 +1,55 @@
 import { useGetVaultStats, getGetVaultStatsQueryKey } from "@workspace/api-client-react";
 import { Link } from "wouter";
-import { Plus, ScanLine, Activity } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ScanLine, Activity } from "lucide-react";
 
 export function TelemetryNav() {
   const { data: stats } = useGetVaultStats({
-    query: {
-      queryKey: getGetVaultStatsQueryKey()
-    }
+    query: { queryKey: getGetVaultStatsQueryKey() }
   });
 
   return (
-    <nav className="sticky top-0 z-50 w-full border-b border-sidebar-border bg-sidebar/80 backdrop-blur-md">
-      <div className="flex h-16 items-center px-4 gap-6 w-full max-w-[1400px] mx-auto">
-        <div className="flex items-center gap-2">
-          <Activity className="h-6 w-6 text-primary" />
-          <Link href="/" className="font-bold text-xl tracking-tight text-foreground hover:text-primary transition-colors uppercase">
-            POKÉVAULT
+    <nav className="sticky top-0 z-50 w-full border-b border-sidebar-border bg-sidebar/95 backdrop-blur-md">
+      <div className="flex h-14 sm:h-16 items-center px-3 sm:px-4 gap-2 sm:gap-4 w-full max-w-[1400px] mx-auto">
+        {/* Logo */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <Activity className="h-5 w-5 text-primary" />
+          <Link href="/" className="font-bold text-sm sm:text-xl tracking-tight text-foreground hover:text-primary transition-colors uppercase">
+            PokéVault
           </Link>
         </div>
 
-        <div className="flex-1 flex items-center justify-center gap-8">
-          <div className="flex flex-col items-center justify-center">
-            <span className="text-[10px] uppercase text-muted-foreground font-mono tracking-widest">Vault Value</span>
-            <div className="font-mono text-2xl font-bold text-primary tracking-tight drop-shadow-[0_0_8px_rgba(0,255,255,0.4)]">
-              £{stats?.totalValueGBP?.toFixed(2) ?? "0.00"}
-            </div>
-          </div>
-          
-          <div className="h-8 w-px bg-border hidden md:block" />
-          
-          <div className="hidden md:flex gap-8">
-            <div className="flex flex-col items-center justify-center">
-              <span className="text-[10px] uppercase text-muted-foreground font-mono tracking-widest">Cards</span>
-              <span className="font-mono text-foreground font-semibold">{stats?.totalCards ?? 0}</span>
-            </div>
-            <div className="flex flex-col items-center justify-center">
-              <span className="text-[10px] uppercase text-muted-foreground font-mono tracking-widest">Completed Sets</span>
-              <span className="font-mono text-foreground font-semibold">{stats?.completedSets ?? 0}</span>
-            </div>
-            <div className="flex flex-col items-center justify-center">
-              <span className="text-[10px] uppercase text-muted-foreground font-mono tracking-widest">Binders</span>
-              <span className="font-mono text-foreground font-semibold">{stats?.totalBinders ?? 0}</span>
-            </div>
+        {/* Vault value — dominant, always visible */}
+        <div className="flex flex-col items-center justify-center ml-2 sm:ml-6 border-l border-border pl-2 sm:pl-6">
+          <span className="text-[8px] sm:text-[10px] uppercase text-muted-foreground font-mono tracking-widest leading-none">Vault Value</span>
+          <div className="font-mono text-lg sm:text-2xl font-bold text-primary tracking-tight drop-shadow-[0_0_8px_rgba(0,255,255,0.4)] leading-tight">
+            £{stats?.totalValueGBP?.toFixed(2) ?? "0.00"}
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
-          <Link href="/scan" className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-primary text-primary hover:bg-primary/10 h-10 px-4 py-2 bg-primary/5 uppercase tracking-wider">
-            <ScanLine className="w-4 h-4" />
-            <span className="hidden sm:inline">Scan New Card</span>
-          </Link>
+        {/* Secondary telemetry — hidden on xs, show on sm+ */}
+        <div className="hidden sm:flex items-center gap-4 sm:gap-6 ml-4 pl-4 border-l border-border">
+          <div className="flex flex-col items-center">
+            <span className="text-[8px] sm:text-[10px] uppercase text-muted-foreground font-mono tracking-widest leading-none">Cards</span>
+            <span className="font-mono text-sm sm:text-base text-foreground font-semibold leading-tight">{stats?.totalCards ?? 0}</span>
+          </div>
+          <div className="flex flex-col items-center">
+            <span className="text-[8px] sm:text-[10px] uppercase text-muted-foreground font-mono tracking-widest leading-none whitespace-nowrap">Sets Done</span>
+            <span className="font-mono text-sm sm:text-base text-foreground font-semibold leading-tight">{stats?.completedSets ?? 0}/{stats?.totalBinders ?? 0}</span>
+          </div>
         </div>
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Scan button */}
+        <Link
+          href="/scan"
+          className="flex items-center justify-center gap-1.5 rounded border border-primary text-primary bg-primary/5 hover:bg-primary/15 active:bg-primary/20 transition-colors px-3 sm:px-4 py-2 text-xs font-mono uppercase tracking-wider shrink-0 h-9 sm:h-10"
+        >
+          <ScanLine className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+          <span className="hidden xs:inline sm:inline">Scan</span>
+          <span className="hidden sm:inline"> Card</span>
+        </Link>
       </div>
     </nav>
   );

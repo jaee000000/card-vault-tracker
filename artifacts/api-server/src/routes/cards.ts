@@ -13,6 +13,50 @@ import {
 
 const router = Router();
 
+const USD_TO_GBP = 0.79;
+const EUR_TO_GBP = 0.85;
+
+async function fetchLivePriceGBP(name: string, setNumber: number, setCode?: string): Promise<number> {
+  try {
+    const numStr = String(setNumber);
+    const queries = [
+      `name:"${name}" number:${numStr}`,
+      `name:"${name.split(" ")[0]}" number:${numStr}`,
+      `number:${numStr}${setCode ? ` set.id:${setCode.toLowerCase()}` : ""}`,
+    ];
+
+    for (const q of queries) {
+      const url = `https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(q)}&pageSize=10&select=tcgplayer,cardmarket,name,number`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+      if (!res.ok) continue;
+
+      const json = await res.json() as { data: Array<{ tcgplayer?: { prices?: Record<string, { market?: number }> }, cardmarket?: { prices?: { averageSellPrice?: number } } }> };
+      const cards = json.data ?? [];
+      if (!cards.length) continue;
+
+      for (const card of cards) {
+        const tcgPrices = card.tcgplayer?.prices;
+        if (tcgPrices) {
+          const usd =
+            tcgPrices["holofoil"]?.market ??
+            tcgPrices["normal"]?.market ??
+            tcgPrices["reverseHolofoil"]?.market ??
+            Object.values(tcgPrices)[0]?.market;
+          if (usd && usd > 0) return parseFloat((usd * USD_TO_GBP).toFixed(2));
+        }
+
+        const cmPrice = card.cardmarket?.prices?.averageSellPrice;
+        if (cmPrice && cmPrice > 0) return parseFloat((cmPrice * EUR_TO_GBP).toFixed(2));
+      }
+    }
+  } catch (err) {
+    console.warn("PokéTCG price fetch failed:", err);
+  }
+
+  const seed = (name.length * setNumber * 17) % 5000;
+  return parseFloat((1.5 + seed / 100).toFixed(2));
+}
+
 function formatCard(c: typeof cardsTable.$inferSelect) {
   return {
     ...c,
@@ -20,11 +64,6 @@ function formatCard(c: typeof cardsTable.$inferSelect) {
     createdAt: c.createdAt.toISOString(),
     lastPriceRefreshedAt: c.lastPriceRefreshedAt?.toISOString() ?? null,
   };
-}
-
-async function fetchMockPriceGBP(name: string, setNumber: number): Promise<number> {
-  const seed = (name.length * setNumber * 17) % 5000;
-  return parseFloat((1.5 + seed / 100).toFixed(2));
 }
 
 router.get("/", async (req, res) => {
@@ -56,7 +95,7 @@ router.post("/", async (req, res) => {
     return;
   }
 
-  const priceGBP = currentPriceGBP ?? (await fetchMockPriceGBP(name, setNumber));
+  const priceGBP = currentPriceGBP ?? (await fetchLivePriceGBP(name, setNumber, binder.setCode));
 
   const [card] = await db
     .insert(cardsTable)
@@ -73,6 +112,34 @@ router.post("/", async (req, res) => {
     .returning();
 
   res.status(201).json(formatCard(card));
+});
+
+router.post("/resync-all", async (_req, res) => {
+  const cards = await db.select().from(cardsTable);
+  const binders = await db.select().from(bindersTable);
+  const binderMap = new Map(binders.map(b => [b.id, b.setCode]));
+
+  let updated = 0;
+  for (const card of cards) {
+    try {
+      const setCode = binderMap.get(card.assignedBinderId) ?? undefined;
+      const newPrice = await fetchLivePriceGBP(card.name, card.setNumber, setCode);
+      await db
+        .update(cardsTable)
+        .set({ currentPriceGBP: String(newPrice), lastPriceRefreshedAt: new Date() })
+        .where(eq(cardsTable.id, card.id));
+      updated++;
+    } catch (e) {
+      console.warn(`Failed to update price for card ${card.id}:`, e);
+    }
+  }
+
+  const [vaultRow] = await db
+    .select({ total: cardsTable.currentPriceGBP })
+    .from(cardsTable)
+    .limit(0);
+
+  res.json({ updated, message: `Refreshed prices for ${updated} cards.` });
 });
 
 router.get("/:id", async (req, res) => {
@@ -135,7 +202,8 @@ router.post("/:id/refresh-price", async (req, res) => {
     res.status(404).json({ error: "Card not found" });
     return;
   }
-  const newPrice = await fetchMockPriceGBP(card.name, card.setNumber);
+  const [binder] = await db.select().from(bindersTable).where(eq(bindersTable.id, card.assignedBinderId));
+  const newPrice = await fetchLivePriceGBP(card.name, card.setNumber, binder?.setCode);
   const [updated] = await db
     .update(cardsTable)
     .set({ currentPriceGBP: String(newPrice), lastPriceRefreshedAt: new Date() })
