@@ -384,6 +384,56 @@ export async function webSearchRawPriceGBP(
 }
 
 /**
+ * Deterministic official artwork for Japanese cards via LimitlessTCG's JP card
+ * database. Unlike the AI web search — which hallucinates plausible-but-404
+ * image URLs (e.g. serebii.net/card/megadreamex/016.jpg) — LimitlessTCG exposes
+ * a REAL card page at /cards/jp/{set}/{num} whose <meta og:image> points at a
+ * hot-linkable CDN image. We upgrade the "_SM" thumbnail to the "_LG" large
+ * variant and confirm it actually renders from this server. Returns null when
+ * the card isn't found or the image can't be validated.
+ */
+export async function limitlessJpImageUrl(
+  setId: string,
+  setNumber: number
+): Promise<string | null> {
+  const set = setId.trim().toLowerCase();
+  if (!set || !setNumber) return null;
+  try {
+    const page = await fetch(
+      `https://limitlesstcg.com/cards/jp/${encodeURIComponent(set)}/${setNumber}`,
+      { signal: AbortSignal.timeout(8000), headers: { "User-Agent": "Mozilla/5.0" } }
+    );
+    if (!page.ok) return null;
+    const html = await page.text();
+    const og =
+      html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ??
+      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+    let url = og?.[1];
+    if (!url) {
+      const m = html.match(
+        /https?:\/\/limitlesstcg\.nyc3\.cdn\.digitaloceanspaces\.com\/[^\s"'<>)\]]+?\.(?:png|jpg|jpeg|webp)/i
+      );
+      url = m?.[0];
+    }
+    if (!url || !isAllowedImageHost(url)) return null;
+    // Prefer the large variant; fall back to whatever og:image gave us.
+    const large = url.replace(/_SM\.(png|jpe?g|webp)$/i, "_LG.$1");
+    if (large !== url && (await validateImageUrl(large))) {
+      console.log(`[image] limitless-jp: "${set} ${setNumber}" → ${large}`);
+      return large;
+    }
+    if (await validateImageUrl(url)) {
+      console.log(`[image] limitless-jp: "${set} ${setNumber}" → ${url}`);
+      return url;
+    }
+    return null;
+  } catch (err) {
+    console.warn("[image] limitless-jp failed:", (err as Error).message);
+    return null;
+  }
+}
+
+/**
  * Trusted card-image hosts. Acts as both an SSRF guard (the URLs come from
  * untrusted AI output, so we only ever fetch known public card CDNs — never
  * arbitrary hosts, IP literals, or internal addresses) and a correctness guard
@@ -395,6 +445,7 @@ const IMAGE_HOST_ALLOWLIST = [
   "pokemon-card.com",
   "tcgplayer.com",
   "limitlesstcg.com",
+  "limitlesstcg.nyc3.cdn.digitaloceanspaces.com",
   "serebii.net",
   "bulbagarden.net",
 ];
@@ -543,21 +594,32 @@ async function lookupCard(
   // rather than failing to "Price N/A".
   const livePricePromise = webSearchRawPriceGBP(name, setNumber, setTotal, setId);
 
+  // IMAGE FIRST (Japanese cards): kick off the deterministic LimitlessTCG JP-art
+  // lookup up front, concurrently with everything else. For Japanese-only cards
+  // this is the EXACT card's real artwork and is hot-linkable from prod, unlike
+  // the English-twin art (wrong language/frame) or the AI web search (which
+  // hallucinates 404 URLs). It takes priority over whatever a phase finds below.
+  const jpImagePromise: Promise<string | null> =
+    jpSet && setId ? limitlessJpImageUrl(setId, setNumber) : Promise.resolve(null);
+
   // Resolve the final result: prefer the live web price; fall back to the DB
-  // price; otherwise 0. Image/psa10 come from whichever phase found them.
+  // price; otherwise 0. For JP cards the exact LimitlessTCG art wins for the
+  // image; otherwise the image comes from whichever phase found it.
   const finalize = async (
     dbPrice: number,
     imageUrl: string | null,
     dbPsa10GBP: number | null = null,
   ): Promise<{ priceGBP: number; psa10GBP: number | null; imageUrl: string | null; priceNote: string | null }> => {
+    const jpImg = await jpImagePromise;
+    const finalImage = jpImg ?? imageUrl;
     const livePrice = await livePricePromise;
     if (livePrice > 0) {
-      return { priceGBP: livePrice, psa10GBP: dbPsa10GBP, imageUrl, priceNote: "Price from live web search (sold listings)" };
+      return { priceGBP: livePrice, psa10GBP: dbPsa10GBP, imageUrl: finalImage, priceNote: "Price from live web search (sold listings)" };
     }
     if (dbPrice > 0) {
-      return { priceGBP: dbPrice, psa10GBP: dbPsa10GBP, imageUrl, priceNote: jpSet ? jpNote : null };
+      return { priceGBP: dbPrice, psa10GBP: dbPsa10GBP, imageUrl: finalImage, priceNote: jpSet ? jpNote : null };
     }
-    return { priceGBP: 0, psa10GBP: dbPsa10GBP, imageUrl, priceNote: jpSet ? "Japanese card — not in price database" : null };
+    return { priceGBP: 0, psa10GBP: dbPsa10GBP, imageUrl: finalImage, priceNote: jpSet ? "Japanese card — not in price database" : null };
   };
 
   // ── Phase 0: Japanese cards — PriceCharting has the EXACT card + real image ──

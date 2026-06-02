@@ -2,7 +2,7 @@ import { Router } from "express";
 import OpenAI from "openai";
 import { db, cardsTable, bindersTable } from "@workspace/db";
 import { eq, or, isNull } from "drizzle-orm";
-import { findCardImage, priceChartingLookup, webSearchRawPriceGBP, webSearchOfficialImage } from "./scan";
+import { findCardImage, priceChartingLookup, webSearchRawPriceGBP, webSearchOfficialImage, limitlessJpImageUrl } from "./scan";
 import {
   CreateCardBody,
   UpdateCardBody,
@@ -146,7 +146,7 @@ router.post("/", async (req, res) => {
   let resolvedImageUrl = imageUrl ?? null;
   const isProperArt =
     !!resolvedImageUrl &&
-    /scrydex\.com|pokemontcg\.io|pricecharting\.com/.test(resolvedImageUrl);
+    /scrydex\.com|pokemontcg\.io|pricecharting\.com|limitlesstcg\.com|limitlesstcg\.nyc3\.cdn\.digitaloceanspaces\.com/.test(resolvedImageUrl);
   if (!isProperArt) {
     // Bound the lookup so a card that can't be resolved never stalls the save.
     // On timeout we keep the original image (scan photo) and the detail-panel
@@ -675,10 +675,17 @@ router.get("/:id/hires-image", async (req, res) => {
 
   let hiResUrl = await tcgHiResLookup(card.name, card.setNumber);
   // PokéTCG had no match — for Japanese-only cards (and in prod, where
-  // PriceCharting is blocked), fall back to a validated official-art web search.
+  // PriceCharting is blocked) resolve the exact official art. Try the
+  // deterministic LimitlessTCG JP database first (real, hot-linkable art), then
+  // fall back to the AI official-art web search as a last resort.
   if (!hiResUrl) {
     const [binder] = await db.select().from(bindersTable).where(eq(bindersTable.id, card.assignedBinderId));
-    hiResUrl = await webSearchOfficialImage(card.name, card.setNumber, card.setTotal, binder?.setCode);
+    if (binder?.setCode) {
+      hiResUrl = await limitlessJpImageUrl(binder.setCode, card.setNumber);
+    }
+    if (!hiResUrl) {
+      hiResUrl = await webSearchOfficialImage(card.name, card.setNumber, card.setTotal, binder?.setCode);
+    }
   }
   if (hiResUrl) {
     await db.update(cardsTable).set({ imageUrl: hiResUrl }).where(eq(cardsTable.id, id));

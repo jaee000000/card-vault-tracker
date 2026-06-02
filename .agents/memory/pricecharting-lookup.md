@@ -15,6 +15,11 @@ Query that works for Japanese sets: `"{name} {number} {pcKeyword} japanese"` the
 `productName` includes the name + `#number` and `consoleName` includes "japanese". `JP_SET_TO_PC` maps the
 Japanese set code (e.g. `m2a` → `"mega dream"`) to PriceCharting's set keyword.
 
+## Japanese card IMAGES come from LimitlessTCG (deterministic), NOT the AI web search
+`webSearchOfficialImage` (gpt-4o-search-preview) HALLUCINATES plausible-but-404 image URLs for JP-only cards (e.g. it returned `serebii.net/card/megadreamex/016.jpg` and `limitlesstcg.com/cards/jp/M2a/16.jpg` — both 404 text/html), so validation always failed → imageUrl null → frontend showed the user's blurry scan photo. The reliable source is `limitlessJpImageUrl(setId, setNumber)`: GET `https://limitlesstcg.com/cards/jp/{set-lowercased}/{num}` (real page, case-insensitive), extract `<meta og:image>` → a hot-linkable CDN URL `limitlesstcg.nyc3.cdn.digitaloceanspaces.com/tpc/{SET}/{SET}_{num}_{rarity}_JP_SM.png`, then swap `_SM`→`_LG` for hi-res and validate it renders. Verified across M2a/M4/SV8a/SV7a. This is the EXACT JP card art and hot-links from prod (where PriceCharting is blocked).
+**Wiring:** in lookupCard a concurrent `jpImagePromise` runs limitless for JP sets; `finalize` prefers `jpImg ?? imageUrl` so it overrides wrong English-twin art for JP cards (no effect on English cards, where jpImagePromise=null). Also used in the `/cards/:id/hires-image` auto-heal (tried before the web search). Its host is on `IMAGE_HOST_ALLOWLIST`.
+**Watch (architect caught both):** (1) `POST /cards` `isProperArt` regex must include the limitless domains, else card-creation re-runs `tcgHiResLookup` and OVERWRITES the correct JP art with an English-number twin. Any new trusted art host must be added to BOTH the allowlist AND `isProperArt`. (2) lowercase the set code before building the limitless URL (binder setCodes are often uppercase like `M2A`).
+
 ## AI vision is the weak link, not the lookup
 GPT-4o frequently **guesses the Pokémon from the artwork instead of reading the printed name**, and misreads
 small text (set code `m2a`→`sv3a`, number `224`→`204`). Real example: メガユキメノコex = "Mega Froslass ex"
