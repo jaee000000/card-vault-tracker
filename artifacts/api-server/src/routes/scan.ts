@@ -155,8 +155,9 @@ async function priceChartingLookup(
       const match = japanese[0] ?? any[0];
       if (!match) continue;
 
-      // price3 = ungraded/market price, price1 = lowest sold
-      const raw = match.price3 ?? match.price1 ?? "";
+      // price1 = ungraded (raw) price — matches PriceCharting's "Ungraded" column
+      // price2 = PSA 9, price3 = PSA 10 / grade 10
+      const raw = match.price1 ?? "";
       const priceUSD = parseFloat(raw.replace(/[^0-9.]/g, "")) || 0;
       const priceGBP = priceUSD > 0 ? +(priceUSD * USD_TO_GBP).toFixed(2) : 0;
 
