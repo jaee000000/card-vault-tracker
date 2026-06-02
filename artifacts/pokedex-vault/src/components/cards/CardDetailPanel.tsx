@@ -11,6 +11,8 @@ import { useHoloTilt } from "@/hooks/use-holo-tilt";
 
 function FullscreenCardViewer({ imageUrl, name, onClose }: { imageUrl: string; name: string; onClose: () => void }) {
   const holo = useHoloTilt<HTMLDivElement>(40);
+  // PokéTCG hi-res URLs: swap .png → _hires.png for ~4× resolution
+  const hiResUrl = imageUrl.replace(/\.png(\?.*)?$/, "_hires.png$1");
 
   useEffect(() => {
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -64,7 +66,7 @@ function FullscreenCardViewer({ imageUrl, name, onClose }: { imageUrl: string; n
         onClick={(e) => e.stopPropagation()}
         className="relative cursor-default rounded-2xl overflow-hidden shadow-[0_30px_90px_rgba(0,0,0,0.95)]"
       >
-        <img src={imageUrl} alt={name} className="w-full h-full object-cover block" />
+        <img src={hiResUrl} alt={name} className="w-full h-full object-cover block" />
         <div style={holo.shimmerStyle} />
       </div>
 
