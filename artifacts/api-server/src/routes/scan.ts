@@ -428,12 +428,22 @@ async function lookupCard(
   // ── Phase 5: name-only fallback — price estimate, NO image (wrong art) ────────
   if (firstName.length > 2) {
     const byName = await tcgFetch(`name:"${firstName}"`, 80);
-    const matched = byName
-      .filter(c => namesMatch(name, c.name ?? ""))
-      .sort((a, b) =>
+    const candidates = byName.filter(c => namesMatch(name, c.name ?? ""));
+    const sortBySetTotal = (arr: TCGCard[]) =>
+      [...arr].sort((a, b) =>
         Math.abs((a.set?.printedTotal ?? 9999) - setTotal) -
         Math.abs((b.set?.printedTotal ?? 9999) - setTotal)
-      )[0];
+      );
+    // Prefer cards that share the same rarity suffix (ex/GX/V/VMAX etc.) AND have a price.
+    // This avoids picking a cheap base-form card when the scanned card is an "ex" or "GX".
+    const suffix = /\b(ex|GX|V|VMAX|VSTAR|EX)\b/i.exec(name)?.[1]?.toLowerCase();
+    const hasSuffix = (c: TCGCard) =>
+      !suffix || (c.name ?? "").toLowerCase().includes(suffix);
+    const priced = candidates.filter(c => bestPrice(c) > 0);
+    const matched =
+      sortBySetTotal(priced.filter(hasSuffix))[0] ??  // best: same suffix + priced
+      sortBySetTotal(priced)[0] ??                     // fallback: any priced
+      sortBySetTotal(candidates)[0];                   // last resort: 0-priced
     if (matched) {
       const note = jpSet
         ? "Japanese card — price estimate from English equivalent"
