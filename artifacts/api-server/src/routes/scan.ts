@@ -568,13 +568,16 @@ Extract these 5 fields:
    - Keep the "メガ"/"Mega" prefix and the "ex"/"GX"/"V"/"VMAX"/"VSTAR" suffix EXACTLY as printed: "メガユキメノコex"→"Mega Froslass ex", "メガカイリューex"→"Mega Dragonite ex", "リザードンex"→"Charizard ex"
 2. setNumber — integer BEFORE the slash (e.g. 224 from "224/193")
 3. setTotal — integer AFTER the slash (e.g. 193 from "224/193")
-4. setId — the small set code near those numbers (e.g. "sv2", "sv1a", "m2a", "swsh12"). Read each character individually.
+4. setId — the small set code near those numbers. Read each character individually.
+   - Japanese M-series examples: "m4" (83 cards), "m2a" (193 cards), "m2b". The letter is lowercase "m", NOT "x" or "xy".
+   - Do NOT confuse Japanese "m4" with English "xy4" — they are completely different sets. If the code starts with the letter M, output "m4" not "xy4".
+   - Other examples: "sv2", "sv1a", "swsh12".
 5. rarity — abbreviation if visible (e.g. "AR", "SAR", "SR", "RR", "MA", "R", "C")
 
 CRITICAL:
 - The NAME comes from the printed TEXT at the top, NOT from the artwork. If the text says "ユキメノコ" (Froslass) but the picture looks like another snow Pokémon, the name is Froslass.
 - Read the EXACT digits of setNumber and setTotal. Do not substitute numbers from memory.
-- Read the EXACT set code character by character. "m2a" ≠ "sv2a" ≠ "sv1a".
+- Read the EXACT set code character by character. "m2a" ≠ "sv2a" ≠ "sv1a". "m4" ≠ "xy4".
 - For AR/SAR/MA cards, setNumber exceeds setTotal (e.g. 224/193). This is normal — report it exactly.
 - Set confidence to "low" if any part is unclear.
 
@@ -607,8 +610,24 @@ If the card cannot be identified at all:
     const name = normalizeSpeciesName(String(parsed.name ?? "Unknown").trim());
     const setNumber = parseInt(String(parsed.setNumber ?? "0"), 10);
     const setTotal = parseInt(String(parsed.setTotal ?? "0"), 10);
-    const setId = parsed.setId ? String(parsed.setId).trim() : undefined;
+    let setId = parsed.setId ? String(parsed.setId).trim() : undefined;
     const rarity = parsed.rarity ? String(parsed.rarity).trim() : undefined;
+
+    // Correct known AI misreads of Japanese set codes.
+    // Key: what AI returned. Value: [correct code, expected English set total].
+    // If the reported setTotal doesn't match the English set size, apply correction.
+    const SET_ID_FIXES: Record<string, [string, number]> = {
+      "xy4":  ["m4",  119],  // XY4 = Phantom Forces (119 cards); if total ≠ 119, likely M4 (83)
+      "xy3":  ["m3",  98 ],  // XY3 = Furious Fists (111 cards)
+      "xy2":  ["m2",  106],  // XY2 = Flashfire (106 cards)
+      "xy1":  ["m1",  146],  // XY base (146 cards)
+    };
+    if (setId) {
+      const fix = SET_ID_FIXES[setId.toLowerCase()];
+      if (fix && setTotal !== fix[1]) {
+        setId = fix[0];
+      }
+    }
     const confidence = String(parsed.confidence ?? "medium");
 
     if (!setNumber || !setTotal) {
