@@ -594,6 +594,24 @@ async function lookupCard(
   // rather than failing to "Price N/A".
   const livePricePromise = webSearchRawPriceGBP(name, setNumber, setTotal, setId);
 
+  // Cap how long the SCAN RESPONSE will wait on the live price. The web search
+  // usually returns in ~2-4s but can take up to its 20s timeout; blocking the
+  // whole /identify request that long risks the deployment/mobile gateway
+  // killing the connection (the user then sees "Network error"). If the price
+  // isn't back within the budget we return the DB price (or 0) now — the card's
+  // post-save price refresh still fills in the live price moments later, so the
+  // price never permanently fails. The underlying search keeps running.
+  const PRICE_WAIT_MS = 12000;
+  let priceWaitTimer: ReturnType<typeof setTimeout> | undefined;
+  const priceWaitFallback = new Promise<number>((resolve) => {
+    priceWaitTimer = setTimeout(() => resolve(0), PRICE_WAIT_MS);
+    priceWaitTimer.unref?.();
+  });
+  const livePriceCapped: Promise<number> = Promise.race([
+    livePricePromise,
+    priceWaitFallback,
+  ]).finally(() => clearTimeout(priceWaitTimer));
+
   // IMAGE FIRST (Japanese cards): kick off the deterministic LimitlessTCG JP-art
   // lookup up front, concurrently with everything else. For Japanese-only cards
   // this is the EXACT card's real artwork and is hot-linkable from prod, unlike
@@ -612,7 +630,7 @@ async function lookupCard(
   ): Promise<{ priceGBP: number; psa10GBP: number | null; imageUrl: string | null; priceNote: string | null }> => {
     const jpImg = await jpImagePromise;
     const finalImage = jpImg ?? imageUrl;
-    const livePrice = await livePricePromise;
+    const livePrice = await livePriceCapped;
     if (livePrice > 0) {
       return { priceGBP: livePrice, psa10GBP: dbPsa10GBP, imageUrl: finalImage, priceNote: "Price from live web search (sold listings)" };
     }
@@ -724,16 +742,21 @@ async function lookupCard(
     const twin = sortBySetTotal(numMatches)[0];
     const twinPrice = twin ? bestPrice(twin) : 0;
     let img = twin?.images?.large ?? twin?.images?.small ?? null;
-    if (!img) img = await webSearchOfficialImage(name, setNumber, setTotal, setId);
+    // For JP cards the image comes from the concurrent LimitlessTCG lookup
+    // (jpImagePromise) which finalize() prefers, so don't also run the slow
+    // ~20s AI image search here — for JP cards it only hallucinates 404 URLs
+    // and would needlessly stall the response past the gateway timeout.
+    if (!img && !jpSet) img = await webSearchOfficialImage(name, setNumber, setTotal, setId);
 
-    if (twinPrice > 0 || img || (await livePricePromise) > 0) {
+    if (jpSet || twinPrice > 0 || img || (await livePriceCapped) > 0) {
       return await finalize(twinPrice, img);
     }
   }
 
-  // ── Phase 6: nothing in any database — live web search for art (the price is
-  // already running via finalize / livePricePromise). ─────────────────────────
-  const webImg = await webSearchOfficialImage(name, setNumber, setTotal, setId);
+  // ── Phase 6: nothing in any database. Image: JP cards use the concurrent
+  // LimitlessTCG lookup (via finalize); only non-JP cards fall to the AI image
+  // search. The price is already running via finalize / livePriceCapped. ──────
+  const webImg = jpSet ? null : await webSearchOfficialImage(name, setNumber, setTotal, setId);
   return await finalize(0, webImg);
 }
 

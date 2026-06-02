@@ -136,7 +136,14 @@ router.post("/", async (req, res) => {
     return;
   }
 
-  const priceGBP = currentPriceGBP ?? (await fetchLivePriceGBP(name, setNumber, binder.setCode, setTotal));
+  // The scan returns a live price for the common case, but its price wait is
+  // capped so a slow web search never times out the scan — in that rare case the
+  // scan price comes back 0. Treat a 0/missing scan price as "not resolved" and
+  // re-fetch it here at save time so a saved card reliably ends up with a price.
+  const priceGBP =
+    currentPriceGBP && currentPriceGBP > 0
+      ? currentPriceGBP
+      : await fetchLivePriceGBP(name, setNumber, binder.setCode, setTotal);
 
   // Resolve proper card art for EVERY scanned card. The frontend sends the user's
   // own scan-photo thumbnail (a data: URI) whenever the scan couldn't find real art.
