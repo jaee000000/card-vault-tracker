@@ -17,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Camera, X, Plus, Sparkles, AlertTriangle } from "lucide-react";
+import { Loader2, Camera, X, Plus, Sparkles, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { useLocation } from "wouter";
 
 const CONDITIONS = ["Raw", "PSA 10", "PSA 9", "BGS 10", "CGC 10", "Lightly Played", "Heavily Played"];
@@ -134,6 +134,7 @@ export default function Scanner() {
   const [newBinderName, setNewBinderName] = useState("");
   const [newBinderCode, setNewBinderCode] = useState("");
   const [showNewBinder, setShowNewBinder] = useState(false);
+  const [prefillLoading, setPrefillLoading] = useState(false);
   const [capturedFrameUrl, setCapturedFrameUrl] = useState<string | null>(null);
 
   const startCamera = useCallback(async () => {
@@ -187,8 +188,7 @@ export default function Scanner() {
     };
   }, [status]);
 
-  // Look up the set and pre-fill the new-binder form so a matching binder can be
-  // created automatically (with the correct number of pockets) on save.
+  // Look up the set and auto-fill binder name/code for silent creation on save.
   const prefillNewBinder = async (setId: string | undefined, setTotal: number, token: number) => {
     const fallbackName = setId ? `${setId.toUpperCase()} Set` : "New Set";
     const fallbackCode = (setId || "SET").toUpperCase();
@@ -210,6 +210,7 @@ export default function Scanner() {
     if (prefillTokenRef.current !== token) return;
     setNewBinderName(name);
     setNewBinderCode(code);
+    setPrefillLoading(false);
   };
 
   const handleScan = async () => {
@@ -268,9 +269,10 @@ export default function Scanner() {
         setSelectedBinderId(String(match.id));
         setShowNewBinder(false);
       } else {
-        // No binder for this set yet → auto-create one with the right pockets.
+        // No binder for this set yet → will auto-create one on save.
         setSelectedBinderId(NEW_BINDER_VALUE);
         setShowNewBinder(true);
+        setPrefillLoading(true);
         const token = ++prefillTokenRef.current;
         void prefillNewBinder(data.setId, data.setTotal, token);
       }
@@ -319,20 +321,19 @@ export default function Scanner() {
     let binderId: number;
 
     if (selectedBinderId === NEW_BINDER_VALUE) {
-      if (!newBinderName || !newBinderCode) {
-        toast({ title: "Incomplete", variant: "destructive", description: "Fill in binder name and code." });
-        return;
-      }
+      // Use auto-detected values; fall back to set-id-based name if prefill hasn't resolved yet
+      const binderName = newBinderName || (scanResult.setId ? `${scanResult.setId.toUpperCase()} Set` : "New Set");
+      const binderCode = (newBinderCode || scanResult.setId || "SET").toUpperCase();
       try {
         const newBinder = await new Promise<{ id: number }>((resolve, reject) => {
           createBinder.mutate(
-            { data: { name: newBinderName, setCode: newBinderCode.toUpperCase(), setTotal: scanResult.setTotal } },
+            { data: { name: binderName, setCode: binderCode, setTotal: scanResult.setTotal } },
             { onSuccess: (b) => resolve(b), onError: reject }
           );
         });
         await refetchBinders();
         binderId = newBinder.id;
-        toast({ title: "Binder Created", description: newBinderName });
+        toast({ title: "Binder Created", description: binderName });
       } catch {
         toast({ title: "Binder Creation Failed", variant: "destructive", description: "Please try again." });
         return;
@@ -379,6 +380,9 @@ export default function Scanner() {
     setErrorMsg("");
     setSelectedBinderId("");
     setShowNewBinder(false);
+    setPrefillLoading(false);
+    setNewBinderName("");
+    setNewBinderCode("");
     setCapturedFrameUrl(null);
     startCamera();
   };
@@ -499,64 +503,37 @@ export default function Scanner() {
                 </Select>
               </div>
 
-              {/* Binder */}
+              {/* Binder destination — fully automatic, no form needed */}
               <div className="space-y-1.5">
-                <Label className="font-mono uppercase text-[10px] text-muted-foreground">Assign to Binder</Label>
-                <Select
-                  value={selectedBinderId}
-                  onValueChange={v => {
-                    setSelectedBinderId(v);
-                    setShowNewBinder(v === NEW_BINDER_VALUE);
-                  }}
-                >
-                  <SelectTrigger className="font-mono bg-card border-border text-sm">
-                    <SelectValue placeholder="Select binder" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {binders?.map(b => (
-                      <SelectItem key={b.id} value={String(b.id)}>
-                        {b.name} ({b.setCode})
-                      </SelectItem>
-                    ))}
-                    <SelectItem value={NEW_BINDER_VALUE}>
-                      <span className="flex items-center gap-2 text-primary">
-                        <Plus className="w-3 h-3" /> Create new binder
-                      </span>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label className="font-mono uppercase text-[10px] text-muted-foreground">Vault Destination</Label>
+                {showNewBinder ? (
+                  <div className="flex items-center gap-3 px-3 py-2.5 rounded-md bg-primary/5 border border-primary/30">
+                    {prefillLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-primary shrink-0" />
+                    ) : (
+                      <Plus className="w-4 h-4 text-primary shrink-0" />
+                    )}
+                    <div className="min-w-0">
+                      <p className="font-mono text-xs font-bold text-primary truncate">
+                        {prefillLoading ? "Looking up set…" : (newBinderName || `${scanResult.setId?.toUpperCase() || "NEW"} Set`)}
+                      </p>
+                      <p className="font-mono text-[9px] text-muted-foreground">
+                        {prefillLoading ? "Detecting pocket count…" : `Auto-creating · ${scanResult.setTotal} pockets`}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3 px-3 py-2.5 rounded-md bg-card border border-border">
+                    <CheckCircle2 className="w-4 h-4 text-green-400 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="font-mono text-xs font-bold truncate">
+                        {binders?.find(b => String(b.id) === selectedBinderId)?.name ?? "Matched Binder"}
+                      </p>
+                      <p className="font-mono text-[9px] text-muted-foreground">Existing binder matched</p>
+                    </div>
+                  </div>
+                )}
               </div>
-
-              {/* Inline new-binder form — auto-filled from the scanned set */}
-              {showNewBinder && (
-                <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-3">
-                  <p className="font-mono text-[10px] uppercase text-primary tracking-widest">
-                    New Binder — {scanResult.setTotal} pockets (auto-detected)
-                  </p>
-                  <p className="font-mono text-[9px] text-muted-foreground -mt-1.5">
-                    No binder for this set yet — we looked it up for you. Edit if needed, then add to vault.
-                  </p>
-                  <div className="space-y-1.5">
-                    <Label className="font-mono uppercase text-[10px] text-muted-foreground">Binder Name</Label>
-                    <Input
-                      value={newBinderName}
-                      onChange={e => setNewBinderName(e.target.value)}
-                      className="font-mono bg-card border-border text-sm"
-                      placeholder="e.g. Scarlet & Violet Base"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="font-mono uppercase text-[10px] text-muted-foreground">Set Code</Label>
-                    <Input
-                      value={newBinderCode}
-                      onChange={e => setNewBinderCode(e.target.value.toUpperCase())}
-                      className="font-mono bg-card border-border text-sm uppercase"
-                      placeholder="SVB"
-                      maxLength={10}
-                    />
-                  </div>
-                </div>
-              )}
             </div>
 
             <div className="flex gap-3 pt-2 pb-6">
@@ -570,10 +547,10 @@ export default function Scanner() {
               <Button
                 className="flex-1 font-mono uppercase text-xs h-11"
                 onClick={handleSave}
-                disabled={isPending}
+                disabled={isPending || prefillLoading}
               >
-                {isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                Add to Vault
+                {(isPending || prefillLoading) ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                {prefillLoading ? "Preparing…" : "Add to Vault"}
               </Button>
             </div>
           </div>

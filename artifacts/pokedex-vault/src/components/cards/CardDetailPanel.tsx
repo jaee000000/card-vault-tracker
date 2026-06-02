@@ -2,9 +2,10 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { useGetCard, getGetCardQueryKey, useUpdateCard, useDeleteCard, useRefreshCardPrice, getGetBinderQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, RefreshCw, Trash2, Award, Sparkles, AlertCircle } from "lucide-react";
+import { Loader2, RefreshCw, Trash2, Award, Sparkles, AlertCircle, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEffect, useState } from "react";
+import { useLocation } from "wouter";
 
 type GradedValues = {
   raw: number;
@@ -17,6 +18,7 @@ type GradedValues = {
 export function CardDetailPanel({ cardId, open, onOpenChange }: { cardId: number | null, open: boolean, onOpenChange: (open: boolean) => void }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [, setLocation] = useLocation();
 
   const { data: card, isLoading } = useGetCard(cardId || 0, {
     query: { enabled: !!cardId, queryKey: getGetCardQueryKey(cardId || 0) }
@@ -200,6 +202,16 @@ export function CardDetailPanel({ cardId, open, onOpenChange }: { cardId: number
 
               <div className="space-y-2 mt-auto">
                 <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest block">System Actions</span>
+                {card.assignedBinderId && (
+                  <Button
+                    variant="outline"
+                    className="w-full font-mono text-xs uppercase gap-2 border-border hover:border-primary/50"
+                    onClick={() => { onOpenChange(false); setLocation(`/binder/${card.assignedBinderId}`); }}
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    Back to Binder
+                  </Button>
+                )}
                 <Button variant="destructive" className="w-full font-mono text-xs uppercase gap-2" onClick={handleDelete} disabled={deleteCard.isPending}>
                   <Trash2 className="w-4 h-4" />
                   Purge from Vault
