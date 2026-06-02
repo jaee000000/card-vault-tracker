@@ -59,5 +59,9 @@ For Japanese cards that fall to Phase 5, PRICE and IMAGE come from DIFFERENT car
 GPT-4o reads the Japanese M-series set code "m4" as "xy4". Fixed two ways: prompt explicitly says m-series start with 'm' not 'xy' ("m4" ≠ "xy4"), AND a code-level SET_ID_FIXES map rewrites xy4→m4 ONLY when setTotal ≠ 119 (real XY4 Phantom Forces size). 
 **Why:** mismatch between reported setTotal and the real English set size is the only safe signal it's actually the JP set. Do NOT add speculative xy1/xy2/xy3 entries — their totals were guessed wrong and would misclassify real English XY cards.
 
-## Fixing an already-saved card's wrong image (the scan photo)
-A card added before a scan-image fix keeps the user's raw scan photo as image_url. backfill-images skips it (image not null) and refresh-price/SYNC only updates price. CardDetailPanel now auto-calls GET /api/cards/:id/hires-image on open when the stored image host is NOT scrydex/pokemontcg/pricecharting; that endpoint (tcgHiResLookup, exact name+number) finds correct art and persists it, then the query is invalidated to re-render.
+## Same image-resolution process for EVERY scanned card
+Two layers ensure every card ends up with real card art, not the user's scan photo:
+1. CREATE time (POST /api/cards): if the incoming imageUrl is NOT a card-art host (scrydex/pokemontcg/pricecharting) — i.e. it's the cropped scan-photo data: URI or null — the server runs tcgHiResLookup(name, setNumber) and uses the result if found. It's wrapped in a 4s Promise.race timeout so an unresolvable card never stalls the save; on timeout it keeps the scan photo.
+2. VIEW time (CardDetailPanel): opening a card whose stored image host is NOT a card-art host auto-calls GET /api/cards/:id/hires-image (same tcgHiResLookup), persists, then invalidates queries to re-render. This heals cards saved before the create-time fix.
+**Why:** the scan's lookupCard already returns proper art for most cards, but when it returns null the frontend saves the user's photo; these two layers upgrade those.
+**Watch:** tcgHiResLookup has a base-name+number fallback with no set constraint → small wrong-art risk for Japanese-only cards with no English twin (an unrelated English card of same number could match). Acceptable tradeoff; bound by the 4s timeout at create.

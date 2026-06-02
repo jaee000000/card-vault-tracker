@@ -129,6 +129,26 @@ router.post("/", async (req, res) => {
 
   const priceGBP = currentPriceGBP ?? (await fetchLivePriceGBP(name, setNumber, binder.setCode));
 
+  // Resolve proper card art for EVERY scanned card. The frontend sends the user's
+  // own scan-photo thumbnail (a data: URI) whenever the scan couldn't find real art.
+  // Upgrade that to genuine card art via an exact name+number lookup when possible,
+  // so the pocket shows proper artwork the moment the card is created — same process
+  // for every card, not just ones the scan already resolved.
+  let resolvedImageUrl = imageUrl ?? null;
+  const isProperArt =
+    !!resolvedImageUrl &&
+    /scrydex\.com|pokemontcg\.io|pricecharting\.com/.test(resolvedImageUrl);
+  if (!isProperArt) {
+    // Bound the lookup so a card that can't be resolved never stalls the save.
+    // On timeout we keep the original image (scan photo) and the detail-panel
+    // auto-heal will upgrade it later when the card is opened.
+    const art = await Promise.race([
+      tcgHiResLookup(name, setNumber),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
+    ]);
+    if (art) resolvedImageUrl = art;
+  }
+
   // If PSA 10 came from PriceCharting during scan, save it immediately.
   // Estimate BGS 10 at 1.6× PSA 10 — the AI eBay search refines it on next graded-values request.
   const resolvedPsa10 = psa10GBP ?? null;
@@ -143,7 +163,7 @@ router.post("/", async (req, res) => {
       assignedBinderId,
       condition: condition ?? "Raw",
       currentPriceGBP: String(priceGBP),
-      imageUrl: imageUrl ?? null,
+      imageUrl: resolvedImageUrl,
       lastPriceRefreshedAt: new Date(),
       psa10GBP: resolvedPsa10 != null ? String(resolvedPsa10) : null,
       bgs10GBP: resolvedBgs10 != null ? String(resolvedBgs10) : null,
