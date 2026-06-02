@@ -606,26 +606,27 @@ async function tcgHiResLookup(name: string, setNumber: number): Promise<string |
   const numPad = num.padStart(3, "0");
   const baseName = name.replace(/^Mega\s+/i, "").replace(/\s+(ex|EX|GX|V|VMAX|VSTAR)$/i, "").trim();
 
+  // Only try queries where number is specified — a name-only match is too broad
+  // and will return wrong cards (e.g. English Base Set Dugtrio for a Japanese M2A Dugtrio).
   const queries = [
     `name:"${name}" number:${num}`,
     `name:"${name}" number:${numPad}`,
     `name:"${name.replace(/ ex$/i, "-EX")}" number:${num}`,
     `name:"${name.replace(/ ex$/i, " EX")}" number:${num}`,
-    `name:"${name}"`,
-    `name:"${baseName}"`,
+    `name:"${baseName}" number:${num}`,
+    `name:"${baseName}" number:${numPad}`,
   ];
 
   for (const q of queries) {
     try {
-      const url = `https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(q)}&pageSize=20&select=images,name,number`;
+      const url = `https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(q)}&pageSize=10&select=images,name,number`;
       const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
       if (!r.ok) continue;
       const json = await r.json() as { data?: { images?: { large?: string }; number?: string }[] };
       const results = json.data ?? [];
+      // Only accept exact number match — never pick a card from the wrong set
       const exact = results.find(c => c.images?.large && (c.number === num || c.number === numPad));
-      const any = results.find(c => c.images?.large);
-      const winner = exact ?? any;
-      if (winner?.images?.large) return winner.images.large;
+      if (exact?.images?.large) return exact.images.large;
     } catch { /* continue */ }
   }
   return null;
