@@ -10,12 +10,9 @@ import { useLocation } from "wouter";
 import { useHoloTilt } from "@/hooks/use-holo-tilt";
 
 function FullscreenCardViewer({ cardId, imageUrl, name, onClose }: { cardId: number; imageUrl: string; name: string; onClose: () => void }) {
-  // 12° max tilt + far perspective keeps the card sharp (less CSS 3D distortion = less compositing blur)
-  const holo = useHoloTilt<HTMLDivElement>(12, 1400);
   const [hiResUrl, setHiResUrl] = useState(imageUrl);
   const [imgLoaded, setImgLoaded] = useState(false);
 
-  // Fetch best available hi-res image from the server (PokéTCG large)
   useEffect(() => {
     setHiResUrl(imageUrl);
     setImgLoaded(false);
@@ -34,21 +31,11 @@ function FullscreenCardViewer({ cardId, imageUrl, name, onClose }: { cardId: num
   return createPortal(
     <div
       className="fixed inset-0 flex flex-col items-center justify-center bg-black"
-      style={{
-        zIndex: 99999,
-        pointerEvents: "all",   // override Radix disabling pointer events on body
-        animation: "fsIn 0.22s cubic-bezier(0.22,1,0.36,1)",
-      }}
+      style={{ zIndex: 99999, pointerEvents: "all", animation: "fsIn 0.22s cubic-bezier(0.22,1,0.36,1)" }}
       onClick={onClose}
     >
-      <style>{`
-        @keyframes fsIn {
-          from { opacity: 0; transform: scale(0.94) }
-          to   { opacity: 1; transform: scale(1) }
-        }
-      `}</style>
+      <style>{`@keyframes fsIn { from { opacity:0; transform:scale(0.94) } to { opacity:1; transform:scale(1) } }`}</style>
 
-      {/* Close button — stopPropagation so backdrop click doesn't also fire */}
       <button
         onClick={(e) => { e.stopPropagation(); onClose(); }}
         className="absolute top-5 right-5 p-3 rounded-full bg-white/15 active:bg-white/30 text-white border border-white/25"
@@ -57,27 +44,12 @@ function FullscreenCardViewer({ cardId, imageUrl, name, onClose }: { cardId: num
         <X className="w-5 h-5" />
       </button>
 
-      {/* Card name */}
-      <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-white/35 mb-5 select-none">
-        {name}
-      </p>
+      <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-white/35 mb-5 select-none">{name}</p>
 
-      {/* Full-size card — NO 3D transform so browser renders at native device pixel density.
-          Shimmer still tracks touch position for the holo effect. */}
       <div
-        ref={holo.ref}
-        style={{
-          height: "76vh",
-          aspectRatio: "2.5/3.5",
-          width: "auto",
-          pointerEvents: "all",
-          touchAction: "none",
-          position: "relative",
-          willChange: "auto",
-        }}
-        {...holo.handlers}
         onClick={(e) => e.stopPropagation()}
-        className="cursor-default rounded-2xl overflow-hidden shadow-[0_30px_90px_rgba(0,0,0,0.95)]"
+        style={{ height: "80vh", aspectRatio: "2.5/3.5", width: "auto", position: "relative" }}
+        className="rounded-2xl overflow-hidden shadow-[0_30px_90px_rgba(0,0,0,0.95)]"
       >
         {!imgLoaded && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-20">
@@ -90,13 +62,9 @@ function FullscreenCardViewer({ cardId, imageUrl, name, onClose }: { cardId: num
           className="w-full h-full object-cover block"
           onLoad={() => setImgLoaded(true)}
         />
-        {/* Shimmer overlay only — no 3D tilt, keeps image crisp at full resolution */}
-        <div style={{ ...holo.shimmerStyle, mixBlendMode: "screen" }} />
       </div>
 
-      <p className="font-mono text-[9px] text-white/20 mt-5 select-none">
-        Drag card for shimmer · tap outside to close
-      </p>
+      <p className="font-mono text-[9px] text-white/20 mt-5 select-none">Tap outside to close</p>
     </div>,
     document.body
   );
