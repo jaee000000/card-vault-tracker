@@ -1,0 +1,1 @@
+- [PriceCharting card lookup](pricecharting-lookup.md) — scanner uses PriceCharting price1=raw (not price3); AI misreads name from artwork, fixed via top/bottom crops + prompt.

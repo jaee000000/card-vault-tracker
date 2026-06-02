@@ -66,6 +66,18 @@ function cropCardThumbnail(dataUrl: string): Promise<string> {
   });
 }
 
+/** Crop the top 45% of the frame (where the Pokémon NAME is printed) and upscale 2× for legibility */
+function captureTopCrop(video: HTMLVideoElement): string {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const cropH = Math.floor(vh * 0.45);    // top 45%
+  const OUT_W = Math.min(vw * 2, 1600);
+  const OUT_H = Math.round(OUT_W * cropH / vw);
+  const canvas = document.createElement("canvas");
+  canvas.width = OUT_W; canvas.height = OUT_H;
+  canvas.getContext("2d")!.drawImage(video, 0, 0, vw, cropH, 0, 0, OUT_W, OUT_H);
+  return canvas.toDataURL("image/jpeg", 0.95); // high quality — text reading
+}
+
 /** Crop the bottom 35% of the frame (where set number lives) and upscale 2× for legibility */
 function captureBottomCrop(video: HTMLVideoElement): string {
   const vw = video.videoWidth, vh = video.videoHeight;
@@ -154,6 +166,7 @@ export default function Scanner() {
 
     try {
       const imageBase64 = captureFrame(videoRef.current);
+      const topCropBase64 = captureTopCrop(videoRef.current);
       const bottomCropBase64 = captureBottomCrop(videoRef.current);
       // Store the full frame — used as fallback image if no database image is found
       setCapturedFrameUrl(imageBase64);
@@ -161,7 +174,7 @@ export default function Scanner() {
       const res = await fetch("/api/scan/identify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageBase64, bottomCropBase64 }),
+        body: JSON.stringify({ imageBase64, topCropBase64, bottomCropBase64 }),
       });
 
       const data = await res.json() as ScanResult & { error?: string; reason?: string; detail?: string };

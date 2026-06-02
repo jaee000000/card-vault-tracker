@@ -155,24 +155,61 @@ async function priceChartingLookup(
       const match = japanese[0] ?? any[0];
       if (!match) continue;
 
-      // price1 = ungraded (raw) price — matches PriceCharting's "Ungraded" column
-      // price2 = PSA 9, price3 = PSA 10 / grade 10
-      const raw = match.price1 ?? "";
-      const priceUSD = parseFloat(raw.replace(/[^0-9.]/g, "")) || 0;
-      const priceGBP = priceUSD > 0 ? +(priceUSD * USD_TO_GBP).toFixed(2) : 0;
+      return toPrice(match);
+    } catch {
+      continue;
+    }
+  }
 
-      // Exclude the PriceCharting placeholder image
-      const imgRaw = match.imageUri ?? null;
-      const imageUrl =
-        imgRaw && !imgRaw.includes("no-image-available") ? imgRaw : null;
+  // ── Fallback: AI may have misread the number/set. Search by name only and
+  //    pick the Japanese result with the closest card number. ────────────────
+  const fallbackQueries = [...new Set([
+    pcKeyword ? `${name} ${pcKeyword} japanese` : "",
+    `${name} japanese`,
+  ].filter(Boolean))];
 
-      return { priceGBP, imageUrl };
+  for (const q of fallbackQueries) {
+    try {
+      const url = `https://www.pricecharting.com/search-products?q=${encodeURIComponent(q)}&type=prices`;
+      const r = await fetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" },
+        signal: AbortSignal.timeout(7000),
+      });
+      if (!r.ok) continue;
+
+      const data = await r.json() as { products?: PCProduct[] };
+      const japanese = (data.products ?? []).filter(
+        (p) =>
+          p.productName?.toLowerCase().includes(name.toLowerCase()) &&
+          p.consoleName?.toLowerCase().includes("japanese")
+      );
+      if (!japanese.length) continue;
+
+      // Pick the result whose printed number is closest to what the AI read
+      const closest = japanese
+        .map((p) => ({
+          p,
+          num: parseInt(p.productName?.match(/#(\d+)/)?.[1] ?? "99999", 10),
+        }))
+        .sort((a, b) => Math.abs(a.num - setNumber) - Math.abs(b.num - setNumber))[0];
+
+      if (closest) return toPrice(closest.p);
     } catch {
       continue;
     }
   }
 
   return null;
+}
+
+/** Convert a PriceCharting product to our price/image shape (price1 = ungraded/raw). */
+function toPrice(p: PCProduct): { priceGBP: number; imageUrl: string | null } {
+  const raw = p.price1 ?? "";
+  const priceUSD = parseFloat(raw.replace(/[^0-9.]/g, "")) || 0;
+  const priceGBP = priceUSD > 0 ? +(priceUSD * USD_TO_GBP).toFixed(2) : 0;
+  const imgRaw = p.imageUri ?? null;
+  const imageUrl = imgRaw && !imgRaw.includes("no-image-available") ? imgRaw : null;
+  return { priceGBP, imageUrl };
 }
 
 async function lookupCard(
@@ -188,7 +225,10 @@ async function lookupCard(
     ? (JP_TO_EN[setId.toLowerCase()] ?? (!jpSet ? setId.toLowerCase() : null))
     : null;
 
-  const baseName = name.replace(/[-\s]?(ex|GX|V|VMAX|VSTAR|AR|SAR|UR|SR|RR)$/i, "").trim();
+  const baseName = name
+    .replace(/^mega\s+/i, "")                                    // drop "Mega" prefix
+    .replace(/[-\s]?(ex|GX|V|VMAX|VSTAR|AR|SAR|UR|SR|RR)$/i, "") // drop card-type suffix
+    .trim();
   const firstName = baseName.split(/\s+/)[0].replace(/[^a-zA-Z0-9]/g, "");
 
   const jpNote = "Japanese card — price shown is for nearest English equivalent";
@@ -294,8 +334,9 @@ async function lookupCard(
 
 // POST /api/scan/identify
 router.post("/identify", async (req, res) => {
-  const { imageBase64, bottomCropBase64 } = req.body as {
+  const { imageBase64, topCropBase64, bottomCropBase64 } = req.body as {
     imageBase64?: string;
+    topCropBase64?: string;
     bottomCropBase64?: string;
   };
   if (!imageBase64) {
@@ -309,17 +350,31 @@ router.post("/identify", async (req, res) => {
   const userContent: OpenAI.Chat.ChatCompletionContentPart[] = [
     { type: "image_url", image_url: { url: toDataUri(imageBase64), detail: "high" } },
   ];
+  const imgDesc: string[] = ["Image 1 is the full card."];
+  let imgN = 2;
+  if (topCropBase64) {
+    userContent.push({
+      type: "image_url",
+      image_url: { url: toDataUri(topCropBase64), detail: "high" },
+    });
+    imgDesc.push(
+      `Image ${imgN} is a 2× zoomed crop of the card's TOP. READ the Pokémon's printed NAME from this text, character by character. Do NOT guess the species from the artwork — read the literal printed name.`
+    );
+    imgN++;
+  }
   if (bottomCropBase64) {
     userContent.push({
       type: "image_url",
       image_url: { url: toDataUri(bottomCropBase64), detail: "high" },
     });
+    imgDesc.push(
+      `Image ${imgN} is a 2× zoomed crop of the card's BOTTOM. Use it to read the EXACT set code, number and rarity character by character.`
+    );
+    imgN++;
   }
   userContent.push({
     type: "text",
-    text: bottomCropBase64
-      ? "Image 1 is the full card. Image 2 is a 2× zoomed crop of the card's bottom section. Use Image 2 to read the EXACT set code, number and rarity character by character."
-      : "Identify this Pokémon card.",
+    text: imgDesc.length > 1 ? imgDesc.join(" ") : "Identify this Pokémon card.",
   });
 
   try {
@@ -333,20 +388,23 @@ router.post("/identify", async (req, res) => {
           content: `You are a Pokémon TCG card scanner. Read ONLY what is literally printed on the card — do NOT guess or use memory.
 
 Extract these 5 fields:
-1. name — Pokémon name in ENGLISH (translate Japanese: "ドンメル"→"Numel", "リザードン"→"Charizard")
-2. setNumber — integer BEFORE the slash (e.g. 198 from "198/193")
-3. setTotal — integer AFTER the slash (e.g. 193 from "198/193")
+1. name — the Pokémon name in ENGLISH. You MUST read this from the printed name text at the TOP of the card (use the zoomed top crop). NEVER identify the Pokémon from its artwork — many Pokémon look alike (e.g. ice/snow Pokémon). Read the printed characters literally and translate:
+   - Japanese examples: "ドンメル"→"Numel", "リザードン"→"Charizard", "ユキメノコ"→"Froslass", "ユキノオー"→"Abomasnow"
+   - Keep the "メガ"/"Mega" prefix and the "ex"/"GX"/"V"/"VMAX"/"VSTAR" suffix EXACTLY as printed: "メガユキメノコex"→"Mega Froslass ex", "リザードンex"→"Charizard ex"
+2. setNumber — integer BEFORE the slash (e.g. 224 from "224/193")
+3. setTotal — integer AFTER the slash (e.g. 193 from "224/193")
 4. setId — the small set code near those numbers (e.g. "sv2", "sv1a", "m2a", "swsh12"). Read each character individually.
-5. rarity — abbreviation if visible (e.g. "AR", "SAR", "SR", "RR", "R", "C")
+5. rarity — abbreviation if visible (e.g. "AR", "SAR", "SR", "RR", "MA", "R", "C")
 
 CRITICAL:
+- The NAME comes from the printed TEXT at the top, NOT from the artwork. If the text says "ユキメノコ" (Froslass) but the picture looks like another snow Pokémon, the name is Froslass.
 - Read the EXACT digits of setNumber and setTotal. Do not substitute numbers from memory.
 - Read the EXACT set code character by character. "m2a" ≠ "sv2a" ≠ "sv1a".
-- For AR/SAR cards, setNumber exceeds setTotal (e.g. 198/193). This is normal — report it exactly.
+- For AR/SAR/MA cards, setNumber exceeds setTotal (e.g. 224/193). This is normal — report it exactly.
 - Set confidence to "low" if any part is unclear.
 
 Output ONLY valid JSON, no markdown:
-{"name":"Numel","setNumber":198,"setTotal":193,"setId":"m2a","rarity":"AR","confidence":"high"}
+{"name":"Mega Froslass ex","setNumber":224,"setTotal":193,"setId":"m2a","rarity":"MA","confidence":"high"}
 
 If the card cannot be identified at all:
 {"error":"Cannot identify card","reason":"brief reason"}`,
