@@ -343,7 +343,7 @@ export async function webSearchRawPriceGBP(
           {
             role: "user",
             content:
-              `Find the current RAW (ungraded, Near Mint) market price in GBP for this Japanese-language Pokémon card: ${desc}. ` +
+              `Find the current RAW (ungraded, Near Mint) market price in GBP for this${setId && isJapaneseSet(setId) ? " Japanese-language" : ""} Pokémon card: ${desc}. ` +
               `Search eBay UK and eBay.com SOLD/completed listings, PriceCharting, mavin.io, 130point, and TCG marketplaces for recent actual sold prices of the UNGRADED card (NOT graded / PSA / BGS / CGC). ` +
               `Convert USD to GBP (1 USD = ${USD_TO_GBP} GBP) and JPY to GBP (1 JPY = 0.0052 GBP). ` +
               `Use a typical recent sold price, not the highest outlier. ` +
@@ -535,28 +535,29 @@ async function lookupCard(
 
   const jpNote = "Japanese card — price shown is for nearest English equivalent";
 
-  // When an English-equivalent phase resolves an image but no price (the twin
-  // card has price 0 in PokéTCG), don't short-circuit to "Price N/A" — fetch the
-  // real raw price via live web search and keep the image we already found.
-  const withLivePrice = async (
-    priceGBP: number,
+  // PRICE FIRST: for EVERY scanned card, kick off the live web-search price up
+  // front so it runs concurrently with the image lookup below. The live web
+  // price is the PRIMARY source — database prices (PokéTCG/PriceCharting) are
+  // only used as a fallback when the live search comes back empty. This is what
+  // the user asked for: the price should succeed on essentially every card
+  // rather than failing to "Price N/A".
+  const livePricePromise = webSearchRawPriceGBP(name, setNumber, setTotal, setId);
+
+  // Resolve the final result: prefer the live web price; fall back to the DB
+  // price; otherwise 0. Image/psa10 come from whichever phase found them.
+  const finalize = async (
+    dbPrice: number,
     imageUrl: string | null,
+    dbPsa10GBP: number | null = null,
   ): Promise<{ priceGBP: number; psa10GBP: number | null; imageUrl: string | null; priceNote: string | null }> => {
-    if (priceGBP > 0) {
-      return { priceGBP, psa10GBP: null, imageUrl, priceNote: jpSet ? jpNote : null };
+    const livePrice = await livePricePromise;
+    if (livePrice > 0) {
+      return { priceGBP: livePrice, psa10GBP: dbPsa10GBP, imageUrl, priceNote: "Price from live web search (sold listings)" };
     }
-    const wp = await webSearchRawPriceGBP(name, setNumber, setTotal, setId);
-    return {
-      priceGBP: wp,
-      psa10GBP: null,
-      imageUrl,
-      priceNote:
-        wp > 0
-          ? "Price from live web search (sold listings)"
-          : jpSet
-            ? "Japanese card — not in price database"
-            : null,
-    };
+    if (dbPrice > 0) {
+      return { priceGBP: dbPrice, psa10GBP: dbPsa10GBP, imageUrl, priceNote: jpSet ? jpNote : null };
+    }
+    return { priceGBP: 0, psa10GBP: dbPsa10GBP, imageUrl, priceNote: jpSet ? "Japanese card — not in price database" : null };
   };
 
   // ── Phase 0: Japanese cards — PriceCharting has the EXACT card + real image ──
@@ -565,12 +566,7 @@ async function lookupCard(
   if (jpSet) {
     const pc = await priceChartingLookup(name, setNumber, setId);
     if (pc && (pc.priceGBP > 0 || pc.imageUrl)) {
-      return {
-        priceGBP: pc.priceGBP,
-        psa10GBP: pc.psa10GBP,
-        imageUrl: pc.imageUrl,
-        priceNote: "Price & image from PriceCharting.com",
-      };
+      return await finalize(pc.priceGBP, pc.imageUrl, pc.psa10GBP);
     }
   }
 
@@ -579,7 +575,7 @@ async function lookupCard(
     const results = await tcgFetch(`set.id:${enSetId} number:${numStr}`, 10);
     const match = results.find(c => namesMatch(name, c.name ?? ""));
     if (match) {
-      return await withLivePrice(
+      return await finalize(
         bestPrice(match),
         match.images?.large ?? match.images?.small ?? null,
       );
@@ -604,7 +600,7 @@ async function lookupCard(
         Math.abs(parseInt(a.number ?? "0") - setNumber) -
         Math.abs(parseInt(b.number ?? "0") - setNumber)
       )[0];
-      return await withLivePrice(
+      return await finalize(
         bestPrice(best),
         best.images?.large ?? best.images?.small ?? null,
       );
@@ -619,7 +615,7 @@ async function lookupCard(
     c => namesMatch(name, c.name ?? "") && c.set?.printedTotal === setTotal
   );
   if (namedMatch) {
-    return await withLivePrice(
+    return await finalize(
       bestPrice(namedMatch),
       namedMatch.images?.large ?? namedMatch.images?.small ?? null,
     );
@@ -632,7 +628,7 @@ async function lookupCard(
       Math.abs((b.set?.printedTotal ?? 9999) - setTotal)
     )[0];
   if (namedClose) {
-    return await withLivePrice(
+    return await finalize(
       bestPrice(namedClose),
       namedClose.images?.large ?? namedClose.images?.small ?? null,
     );
@@ -641,15 +637,10 @@ async function lookupCard(
   // ── Phase 4: PriceCharting — works for Japanese sets not in PokéTCG ──────────
   const pc = await priceChartingLookup(name, setNumber, setId);
   if (pc && (pc.priceGBP > 0 || pc.imageUrl)) {
-    return {
-      priceGBP: pc.priceGBP,
-      psa10GBP: pc.psa10GBP,
-      imageUrl: pc.imageUrl,
-      priceNote: "Price & image from PriceCharting.com",
-    };
+    return await finalize(pc.priceGBP, pc.imageUrl, pc.psa10GBP);
   }
 
-  // ── Phase 5: name-only fallback — price estimate + image from English twin ────
+  // ── Phase 5: name-only fallback — IMAGE from an exact English twin, else web ──
   if (firstName.length > 2) {
     const byName = await tcgFetch(`name:"${firstName}"`, 80);
     const candidates = byName.filter(c => namesMatch(name, c.name ?? ""));
@@ -659,62 +650,29 @@ async function lookupCard(
         Math.abs((b.set?.printedTotal ?? 9999) - setTotal)
       );
 
-    // Both the PRICE and the IMAGE may only come from a TRUE twin — an EXACT
-    // name + EXACT number match (e.g. "Mega Greninja ex" EN Chaos Rising == JP
-    // M4). The old "closest set total" fallback was wrong for BOTH: it grabbed a
-    // different card of the same Pokémon from another set — e.g. Vivid Voltage
-    // "Amazing Burst" Rayquaza (wrong art AND £21.93 for a common holo worth
-    // ~£1.60). When there is no exact-number twin we trust neither; the live web
-    // search below supplies the real raw price and the real official art.
+    // IMAGE may only come from a TRUE twin — an EXACT name + EXACT number match
+    // (e.g. "Mega Greninja ex" EN Chaos Rising == JP M4). The old "closest set
+    // total" fallback grabbed a different card of the same Pokémon from another
+    // set (e.g. Vivid Voltage "Amazing Burst" Rayquaza — wrong art). When there
+    // is no exact-number twin, fetch the real official art via web search. The
+    // PRICE comes from the live web search kicked off at the top (finalize).
     const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
     const exactName = candidates.filter(c => norm(c.name ?? "") === norm(name));
     const numMatches = exactName.filter(c => c.number === numStr || c.number === String(setNumber));
     const twin = sortBySetTotal(numMatches)[0];
-    // Only the exact twin's price/art are trustworthy.
-    let priceGBP = twin ? bestPrice(twin) : 0;
+    const twinPrice = twin ? bestPrice(twin) : 0;
     let img = twin?.images?.large ?? twin?.images?.small ?? null;
-    let note: string | null =
-      priceGBP > 0 ? (jpSet ? "Japanese card — price estimate from English equivalent" : null) : null;
+    if (!img) img = await webSearchOfficialImage(name, setNumber, setTotal, setId);
 
-    // Whatever the twin couldn't supply, get from live web search — in parallel.
-    const needPrice = priceGBP === 0;
-    const needImg = !img;
-    if (needPrice || needImg) {
-      const [wp, wi] = await Promise.all([
-        needPrice ? webSearchRawPriceGBP(name, setNumber, setTotal, setId) : Promise.resolve(0),
-        needImg ? webSearchOfficialImage(name, setNumber, setTotal, setId) : Promise.resolve(null),
-      ]);
-      if (needPrice) {
-        if (wp > 0) {
-          priceGBP = wp;
-          note = "Price from live web search (sold listings)";
-        } else {
-          note = jpSet ? "Japanese card — not in price database" : null;
-        }
-      }
-      if (needImg && wi) img = wi;
-    }
-
-    if (priceGBP > 0 || img) {
-      return { priceGBP, psa10GBP: null, imageUrl: img, priceNote: note };
+    if (twinPrice > 0 || img || (await livePricePromise) > 0) {
+      return await finalize(twinPrice, img);
     }
   }
 
-  // ── Phase 6: nothing in any database — live web search for price + art ───────
-  const [webPrice, webImg] = await Promise.all([
-    webSearchRawPriceGBP(name, setNumber, setTotal, setId),
-    webSearchOfficialImage(name, setNumber, setTotal, setId),
-  ]);
-  if (webPrice > 0 || webImg) {
-    return {
-      priceGBP: webPrice,
-      psa10GBP: null,
-      imageUrl: webImg,
-      priceNote: webPrice > 0 ? "Price from live web search (sold listings)" : (jpSet ? "Japanese card — not in price database" : null),
-    };
-  }
-
-  return { priceGBP: 0, psa10GBP: null, imageUrl: null, priceNote: jpSet ? "Japanese card — not in price database" : null };
+  // ── Phase 6: nothing in any database — live web search for art (the price is
+  // already running via finalize / livePricePromise). ─────────────────────────
+  const webImg = await webSearchOfficialImage(name, setNumber, setTotal, setId);
+  return await finalize(0, webImg);
 }
 
 /** Resolve a human-friendly set name + code + pocket count for auto-creating a binder. */
