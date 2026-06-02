@@ -475,10 +475,11 @@ async function resolveSetInfo(
   }
 
   const setCode = id ? id.toUpperCase() : (name ? name.slice(0, 6).toUpperCase() : "SET");
-  if (!name) name = id ? `Set ${setCode}` : setTotal ? `${setTotal}-Card Set` : "New Set";
   if (!setTotal || setTotal < 1) setTotal = setTotalHint || 9;
 
-  return { name, setCode, setTotal };
+  // Name the binder after the set code (what's printed on the card),
+  // not the English full name — so SV2A stays "SV2A", M2A stays "M2A".
+  return { name: setCode, setCode, setTotal };
 }
 
 // GET /api/scan/set-info?setId=m2a&setTotal=193
