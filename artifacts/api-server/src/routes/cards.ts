@@ -600,4 +600,50 @@ router.post("/:id/refresh-price", async (req, res) => {
   res.json(formatCard(updated));
 });
 
+// GET /api/cards/:id/hires-image
+// Looks up the best available hi-res image on PokéTCG and caches it back in the DB.
+router.get("/:id/hires-image", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "bad id" });
+
+  const [card] = await db.select().from(cardsTable).where(eq(cardsTable.id, id)).limit(1);
+  if (!card) return res.status(404).json({ error: "not found" });
+
+  // If we already have a PokéTCG hi-res URL cached, return it immediately
+  if (card.imageUrl && card.imageUrl.includes("images.pokemontcg.io") && card.imageUrl.includes("_hires")) {
+    return res.json({ hiResUrl: card.imageUrl });
+  }
+
+  // Search PokéTCG for a hi-res image
+  const name = card.name;
+  const num = String(card.setNumber);
+  const queries = [
+    `name:"${name}" number:${num}`,
+    `name:"${name.replace(/ ex$/i, "-EX")}" number:${num}`,
+    `name:"${name}" number:${num.padStart(3, "0")}`,
+  ];
+
+  let hiResUrl: string | null = null;
+  for (const q of queries) {
+    try {
+      const url = `https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(q)}&pageSize=10&select=images,name,number`;
+      const r = await fetch(url, { signal: AbortSignal.timeout(7000) });
+      if (!r.ok) continue;
+      const json = await r.json() as { data?: { images?: { large?: string; small?: string } }[] };
+      const match = (json.data ?? []).find(c => c.images?.large);
+      if (match?.images?.large) {
+        hiResUrl = match.images.large;
+        break;
+      }
+    } catch { /* continue */ }
+  }
+
+  // Cache the hi-res URL back in the DB so future fullscreen opens are instant
+  if (hiResUrl) {
+    await db.update(cardsTable).set({ imageUrl: hiResUrl }).where(eq(cardsTable.id, id));
+  }
+
+  return res.json({ hiResUrl: hiResUrl ?? card.imageUrl ?? null });
+});
+
 export default router;

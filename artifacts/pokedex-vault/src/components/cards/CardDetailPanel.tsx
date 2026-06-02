@@ -9,10 +9,20 @@ import { createPortal } from "react-dom";
 import { useLocation } from "wouter";
 import { useHoloTilt } from "@/hooks/use-holo-tilt";
 
-function FullscreenCardViewer({ imageUrl, name, onClose }: { imageUrl: string; name: string; onClose: () => void }) {
+function FullscreenCardViewer({ cardId, imageUrl, name, onClose }: { cardId: number; imageUrl: string; name: string; onClose: () => void }) {
   const holo = useHoloTilt<HTMLDivElement>(40);
-  // PokéTCG hi-res URLs: swap .png → _hires.png for ~4× resolution
-  const hiResUrl = imageUrl.replace(/\.png(\?.*)?$/, "_hires.png$1");
+  const [hiResUrl, setHiResUrl] = useState(imageUrl);
+  const [imgLoaded, setImgLoaded] = useState(false);
+
+  // Fetch best available hi-res image from the server (PokéTCG large)
+  useEffect(() => {
+    setHiResUrl(imageUrl);
+    setImgLoaded(false);
+    fetch(`/api/cards/${cardId}/hires-image`)
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { hiResUrl: string } | null) => { if (d?.hiResUrl) setHiResUrl(d.hiResUrl); })
+      .catch(() => {});
+  }, [cardId, imageUrl]);
 
   useEffect(() => {
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -66,7 +76,17 @@ function FullscreenCardViewer({ imageUrl, name, onClose }: { imageUrl: string; n
         onClick={(e) => e.stopPropagation()}
         className="relative cursor-default rounded-2xl overflow-hidden shadow-[0_30px_90px_rgba(0,0,0,0.95)]"
       >
-        <img src={hiResUrl} alt={name} className="w-full h-full object-cover block" />
+        {!imgLoaded && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-20">
+            <div className="w-6 h-6 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+          </div>
+        )}
+        <img
+          src={hiResUrl}
+          alt={name}
+          className="w-full h-full object-cover block"
+          onLoad={() => setImgLoaded(true)}
+        />
         <div style={holo.shimmerStyle} />
       </div>
 
@@ -317,6 +337,7 @@ export function CardDetailPanel({ cardId, open, onOpenChange }: { cardId: number
 
     {fullscreen && card?.imageUrl && (
       <FullscreenCardViewer
+        cardId={card.id}
         imageUrl={card.imageUrl}
         name={card.name}
         onClose={() => setFullscreen(false)}
