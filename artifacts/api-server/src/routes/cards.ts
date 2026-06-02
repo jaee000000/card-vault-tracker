@@ -55,8 +55,18 @@ async function fetchLivePriceGBP(name: string, setNumber: number, setCode?: stri
     console.warn("PokéTCG price fetch failed:", err);
   }
 
-  const seed = (name.length * setNumber * 17) % 5000;
-  return parseFloat((1.5 + seed / 100).toFixed(2));
+  // PokéTCG had no data — try PriceCharting (price1 = real ungraded market price)
+  try {
+    const pc = await priceChartingLookup(name, setNumber, setCode?.toLowerCase());
+    if (pc?.priceGBP && pc.priceGBP > 0) {
+      console.log(`[price] pricecharting fallback: "${name}" £${pc.priceGBP}`);
+      return pc.priceGBP;
+    }
+  } catch (err) {
+    console.warn("PriceCharting price fetch failed:", err);
+  }
+
+  return 0;
 }
 
 function formatCard(c: typeof cardsTable.$inferSelect) {
