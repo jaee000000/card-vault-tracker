@@ -4,14 +4,12 @@ import {
   useGetVaultStats,
   getGetVaultStatsQueryKey,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Folder, Plus, Activity, Layers, Coins, RefreshCw, TrendingUp } from "lucide-react";
+import { Folder, Plus, Activity, Layers, Coins, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AddBinderDialog } from "@/components/binders/AddBinderDialog";
 import { useState } from "react";
 import { Progress } from "@/components/ui/progress";
-import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 const SET_CODE_COLORS: Record<string, string> = {
@@ -30,34 +28,11 @@ export default function Dashboard() {
     query: { queryKey: getListBindersQueryKey() },
   });
 
-  const { data: stats, refetch: refetchStats } = useGetVaultStats({
+  const { data: stats } = useGetVaultStats({
     query: { queryKey: getGetVaultStatsQueryKey() },
   });
 
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
   const [isAddBinderOpen, setIsAddBinderOpen] = useState(false);
-  const [resyncing, setResyncing] = useState(false);
-
-  const handleResync = async () => {
-    setResyncing(true);
-    try {
-      const res = await fetch("/api/cards/resync-all", { method: "POST" });
-      if (!res.ok) throw new Error("Resync failed");
-      const data = await res.json() as { updated: number };
-      await queryClient.invalidateQueries();
-      toast({
-        title: "Vault Resynced",
-        description: `Live prices updated for ${data.updated} cards.`,
-      });
-    } catch {
-      toast({ title: "Resync Failed", variant: "destructive", description: "Could not fetch live prices." });
-    } finally {
-      setResyncing(false);
-    }
-  };
-
-  void refetchStats;
 
   return (
     <div className="flex flex-col gap-6 pb-12 w-full max-w-[1400px] mx-auto px-3 sm:px-4 mt-4 sm:mt-8">
@@ -131,26 +106,14 @@ export default function Dashboard() {
           <h2 className="text-xl sm:text-2xl font-bold tracking-tight uppercase">Binders</h2>
           <p className="text-muted-foreground font-mono text-xs sm:text-sm mt-0.5">Select a folder to view contents</p>
         </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleResync}
-            disabled={resyncing}
-            className="font-mono uppercase text-xs gap-2 border-primary/40 text-primary hover:bg-primary/10"
-          >
-            <RefreshCw className={cn("w-3.5 h-3.5", resyncing && "animate-spin")} />
-            {resyncing ? "Syncing..." : "Re-sync Values"}
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => setIsAddBinderOpen(true)}
-            className="uppercase tracking-widest font-mono text-xs gap-2"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            New Binder
-          </Button>
-        </div>
+        <Button
+          size="sm"
+          onClick={() => setIsAddBinderOpen(true)}
+          className="uppercase tracking-widest font-mono text-xs gap-2"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          New Binder
+        </Button>
       </div>
 
       {/* Binder grid */}

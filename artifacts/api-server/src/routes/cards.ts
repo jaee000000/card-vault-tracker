@@ -18,7 +18,7 @@ const router = Router();
 const USD_TO_GBP = 0.79;
 const EUR_TO_GBP = 0.85;
 
-async function fetchLivePriceGBP(name: string, setNumber: number, setCode?: string): Promise<number> {
+export async function fetchLivePriceGBP(name: string, setNumber: number, setCode?: string): Promise<number> {
   const sc = setCode?.toLowerCase();
   try {
     const numStr = String(setNumber);
