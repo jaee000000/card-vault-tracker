@@ -10,7 +10,8 @@ import { useLocation } from "wouter";
 import { useHoloTilt } from "@/hooks/use-holo-tilt";
 
 function FullscreenCardViewer({ cardId, imageUrl, name, onClose }: { cardId: number; imageUrl: string; name: string; onClose: () => void }) {
-  const holo = useHoloTilt<HTMLDivElement>(40);
+  // 12° max tilt + far perspective keeps the card sharp (less CSS 3D distortion = less compositing blur)
+  const holo = useHoloTilt<HTMLDivElement>(12, 1400);
   const [hiResUrl, setHiResUrl] = useState(imageUrl);
   const [imgLoaded, setImgLoaded] = useState(false);
 
@@ -61,20 +62,22 @@ function FullscreenCardViewer({ cardId, imageUrl, name, onClose }: { cardId: num
         {name}
       </p>
 
-      {/* Full-size card with holo — stop propagation so taps on card don't close */}
+      {/* Full-size card — NO 3D transform so browser renders at native device pixel density.
+          Shimmer still tracks touch position for the holo effect. */}
       <div
         ref={holo.ref}
         style={{
-          ...holo.cardStyle,
-          height: "72vh",
+          height: "76vh",
           aspectRatio: "2.5/3.5",
           width: "auto",
           pointerEvents: "all",
-          touchAction: "none",   // prevent browser stealing touch for scroll — enables holo on mobile
+          touchAction: "none",
+          position: "relative",
+          willChange: "auto",
         }}
         {...holo.handlers}
         onClick={(e) => e.stopPropagation()}
-        className="relative cursor-default rounded-2xl overflow-hidden shadow-[0_30px_90px_rgba(0,0,0,0.95)]"
+        className="cursor-default rounded-2xl overflow-hidden shadow-[0_30px_90px_rgba(0,0,0,0.95)]"
       >
         {!imgLoaded && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-20">
@@ -87,11 +90,12 @@ function FullscreenCardViewer({ cardId, imageUrl, name, onClose }: { cardId: num
           className="w-full h-full object-cover block"
           onLoad={() => setImgLoaded(true)}
         />
-        <div style={holo.shimmerStyle} />
+        {/* Shimmer overlay only — no 3D tilt, keeps image crisp at full resolution */}
+        <div style={{ ...holo.shimmerStyle, mixBlendMode: "screen" }} />
       </div>
 
       <p className="font-mono text-[9px] text-white/20 mt-5 select-none">
-        Tap outside to close · drag card to tilt
+        Drag card for shimmer · tap outside to close
       </p>
     </div>,
     document.body

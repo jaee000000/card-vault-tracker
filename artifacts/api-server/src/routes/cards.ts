@@ -614,25 +614,37 @@ router.get("/:id/hires-image", async (req, res) => {
     return res.json({ hiResUrl: card.imageUrl });
   }
 
-  // Search PokéTCG for a hi-res image
+  // Search PokéTCG for a hi-res image — try progressively broader queries
   const name = card.name;
   const num = String(card.setNumber);
+  const numPad = num.padStart(3, "0");
+  // Derive a short base name (e.g. "Froslass") for fuzzy matching
+  const baseName = name.replace(/^Mega\s+/i, "").replace(/\s+(ex|EX|GX|V|VMAX|VSTAR)$/, "").trim();
+
   const queries = [
     `name:"${name}" number:${num}`,
+    `name:"${name}" number:${numPad}`,
     `name:"${name.replace(/ ex$/i, "-EX")}" number:${num}`,
-    `name:"${name}" number:${num.padStart(3, "0")}`,
+    `name:"${name.replace(/ ex$/i, " EX")}" number:${num}`,
+    // Broader: just name, any set — picks best large image from any matching card
+    `name:"${name}"`,
+    `name:"${baseName}"`,
   ];
 
   let hiResUrl: string | null = null;
   for (const q of queries) {
     try {
-      const url = `https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(q)}&pageSize=10&select=images,name,number`;
+      const url = `https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(q)}&pageSize=20&select=images,name,number`;
       const r = await fetch(url, { signal: AbortSignal.timeout(7000) });
       if (!r.ok) continue;
-      const json = await r.json() as { data?: { images?: { large?: string; small?: string } }[] };
-      const match = (json.data ?? []).find(c => c.images?.large);
-      if (match?.images?.large) {
-        hiResUrl = match.images.large;
+      const json = await r.json() as { data?: { images?: { large?: string; small?: string }; number?: string }[] };
+      const cards = json.data ?? [];
+      // Prefer exact number match first
+      const exactMatch = cards.find(c => c.images?.large && (c.number === num || c.number === numPad));
+      const anyMatch = cards.find(c => c.images?.large);
+      const winner = exactMatch ?? anyMatch;
+      if (winner?.images?.large) {
+        hiResUrl = winner.images.large;
         break;
       }
     } catch { /* continue */ }

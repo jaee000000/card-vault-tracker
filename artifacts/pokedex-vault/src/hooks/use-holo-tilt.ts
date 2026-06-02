@@ -15,7 +15,7 @@ interface HoloState {
   active: boolean;
 }
 
-export function useHoloTilt<T extends HTMLElement = HTMLElement>(maxAngle = 35) {
+export function useHoloTilt<T extends HTMLElement = HTMLElement>(maxAngle = 35, perspectivePx = 650) {
   const ref = useRef<T>(null);
 
   // target values set from mouse/touch
@@ -93,7 +93,7 @@ export function useHoloTilt<T extends HTMLElement = HTMLElement>(maxAngle = 35) 
   const whiteAlpha = s.active ? 0.5 : 0.18;
 
   const cardStyle: React.CSSProperties = {
-    transform: `perspective(650px) rotateX(${s.rx}deg) rotateY(${s.ry}deg) scale3d(${s.scale},${s.scale},${s.scale})`,
+    transform: `perspective(${perspectivePx}px) rotateX(${s.rx}deg) rotateY(${s.ry}deg) scale3d(${s.scale},${s.scale},${s.scale})`,
     willChange: "transform",
   };
 
