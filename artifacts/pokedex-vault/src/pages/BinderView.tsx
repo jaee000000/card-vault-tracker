@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { QuickAddCardDialog } from "@/components/cards/QuickAddCardDialog";
 import { CardDetailPanel } from "@/components/cards/CardDetailPanel";
 import { motion, AnimatePresence } from "framer-motion";
+import { useHoloTilt } from "@/hooks/use-holo-tilt";
 
 const pageVariants = {
   enter: (dir: number) => ({
@@ -33,6 +34,88 @@ const pageVariants = {
     transition: { duration: 0.16, ease: [0.55, 0, 1, 0.45] as const },
   }),
 };
+
+type BinderCard = {
+  id: number;
+  name: string;
+  imageUrl: string | null;
+  currentPriceGBP: number;
+  condition: string;
+  setNumber: number;
+};
+
+function BinderSlot({
+  slotNumber,
+  card,
+  setTotal,
+  isHighlighted,
+  onClick,
+}: {
+  slotNumber: number;
+  card: BinderCard | undefined;
+  setTotal: number;
+  isHighlighted: boolean;
+  onClick: () => void;
+}) {
+  const holo = useHoloTilt<HTMLButtonElement>(16);
+
+  return (
+    <button
+      ref={holo.ref}
+      onClick={onClick}
+      style={card ? holo.cardStyle : undefined}
+      {...(card ? holo.handlers : {})}
+      className={cn(
+        "relative group rounded-lg overflow-hidden aspect-[2.5/3.5] flex flex-col w-full h-full",
+        card
+          ? "border-2 border-primary/30 hover:border-primary bg-background shadow-[0_0_10px_rgba(0,255,255,0.05)] hover:shadow-[0_0_16px_rgba(0,255,255,0.2)]"
+          : "border border-dashed border-border hover:border-muted-foreground bg-background/40 opacity-60 hover:opacity-100 flex items-center justify-center",
+        isHighlighted && "!border-primary border-2 z-10 animate-[slot-pop_2.4s_ease-out] shadow-[0_0_22px_rgba(0,255,255,0.55)]"
+      )}
+    >
+      {card ? (
+        <>
+          {card.imageUrl ? (
+            <div
+              className="flex-1 w-full bg-cover bg-center"
+              style={{ backgroundImage: `url(${card.imageUrl})` }}
+            />
+          ) : (
+            <div className="flex-1 w-full bg-[#151515] flex items-center justify-center p-1">
+              <span className="font-mono text-[8px] sm:text-[10px] text-center text-muted-foreground leading-tight">
+                {card.name}
+              </span>
+            </div>
+          )}
+          {/* Holographic shimmer */}
+          <div style={holo.shimmerStyle} />
+          <div className="shrink-0 w-full bg-card border-t border-border flex flex-col justify-center px-1 sm:px-2 py-0.5 sm:py-1 relative z-20">
+            <div className="flex justify-between items-center w-full">
+              <span className="font-mono text-[7px] sm:text-[9px] text-muted-foreground">
+                {String(slotNumber).padStart(3, "0")}/{setTotal}
+              </span>
+              <span className="font-mono text-[7px] sm:text-[9px] font-bold text-primary">
+                £{card.currentPriceGBP.toFixed(2)}
+              </span>
+            </div>
+            <div className="text-[6px] sm:text-[8px] uppercase tracking-wider text-muted-foreground truncate">
+              {card.condition}
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="flex flex-col items-center gap-0.5 sm:gap-1 p-1">
+          <span className="font-mono text-sm sm:text-xl text-muted-foreground/30 font-bold">
+            {String(slotNumber).padStart(3, "0")}
+          </span>
+          <span className="font-mono text-[7px] sm:text-[9px] text-muted-foreground/40 uppercase">
+            Empty
+          </span>
+        </div>
+      )}
+    </button>
+  );
+}
 
 export default function BinderView() {
   const params = useParams();
@@ -176,62 +259,15 @@ export default function BinderView() {
                 {Array.from({ length: 9 }).map((_, i) => {
                   const slotNumber = currentPage * 9 + i + 1;
                   const card = getCardForSlot(slotNumber);
-                  const isHighlighted = highlightSlot === slotNumber;
-
                   return (
-                    <button
+                    <BinderSlot
                       key={slotNumber}
-                      onClick={() =>
-                        card ? setSelectedCardId(card.id) : setSelectedSlot(slotNumber)
-                      }
-                      className={cn(
-                        "relative group rounded-lg overflow-hidden aspect-[2.5/3.5] transition-all duration-200 flex flex-col w-full h-full",
-                        card
-                          ? "border-2 border-primary/30 hover:border-primary bg-background hover:scale-[1.02] shadow-[0_0_10px_rgba(0,255,255,0.05)] hover:shadow-[0_0_16px_rgba(0,255,255,0.2)] active:scale-[1.01]"
-                          : "border border-dashed border-border hover:border-muted-foreground bg-background/40 opacity-60 hover:opacity-100 flex items-center justify-center active:opacity-80",
-                        isHighlighted &&
-                          "!border-primary border-2 z-10 animate-[slot-pop_2.4s_ease-out] shadow-[0_0_22px_rgba(0,255,255,0.55)]"
-                      )}
-                    >
-                      {card ? (
-                        <>
-                          {card.imageUrl ? (
-                            <div
-                              className="flex-1 w-full bg-cover bg-center transition-transform duration-300 group-hover:scale-105"
-                              style={{ backgroundImage: `url(${card.imageUrl})` }}
-                            />
-                          ) : (
-                            <div className="flex-1 w-full bg-[#151515] flex items-center justify-center p-1">
-                              <span className="font-mono text-[8px] sm:text-[10px] text-center text-muted-foreground leading-tight">
-                                {card.name}
-                              </span>
-                            </div>
-                          )}
-                          <div className="shrink-0 w-full bg-card border-t border-border flex flex-col justify-center px-1 sm:px-2 py-0.5 sm:py-1">
-                            <div className="flex justify-between items-center w-full">
-                              <span className="font-mono text-[7px] sm:text-[9px] text-muted-foreground">
-                                {String(slotNumber).padStart(3, "0")}/{binder.setTotal}
-                              </span>
-                              <span className="font-mono text-[7px] sm:text-[9px] font-bold text-primary">
-                                £{card.currentPriceGBP.toFixed(2)}
-                              </span>
-                            </div>
-                            <div className="text-[6px] sm:text-[8px] uppercase tracking-wider text-muted-foreground truncate">
-                              {card.condition}
-                            </div>
-                          </div>
-                        </>
-                      ) : (
-                        <div className="flex flex-col items-center gap-0.5 sm:gap-1 p-1">
-                          <span className="font-mono text-sm sm:text-xl text-muted-foreground/30 font-bold">
-                            {String(slotNumber).padStart(3, "0")}
-                          </span>
-                          <span className="font-mono text-[7px] sm:text-[9px] text-muted-foreground/40 uppercase">
-                            Empty
-                          </span>
-                        </div>
-                      )}
-                    </button>
+                      slotNumber={slotNumber}
+                      card={card}
+                      setTotal={binder.setTotal}
+                      isHighlighted={highlightSlot === slotNumber}
+                      onClick={() => card ? setSelectedCardId(card.id) : setSelectedSlot(slotNumber)}
+                    />
                   );
                 })}
               </motion.div>

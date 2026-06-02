@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import { ArrowLeft, TrendingUp, Package, Coins } from "lucide-react";
 import { CardDetailPanel } from "@/components/cards/CardDetailPanel";
 import { cn } from "@/lib/utils";
+import { useHoloTilt } from "@/hooks/use-holo-tilt";
 
 type CollectionCard = {
   id: number;
@@ -17,21 +18,18 @@ type CollectionCard = {
   binderSetCode: string | null;
 };
 
-const RANK_STYLES: Record<number, { badge: string; border: string; glow: string }> = {
+const RANK_STYLES: Record<number, { badge: string; border: string }> = {
   1: {
     badge: "bg-amber-500/20 text-amber-400 border-amber-500/40",
     border: "border-amber-500/40 hover:border-amber-400/70",
-    glow: "hover:shadow-[0_0_20px_rgba(245,158,11,0.25)]",
   },
   2: {
     badge: "bg-slate-400/20 text-slate-300 border-slate-400/40",
     border: "border-slate-400/30 hover:border-slate-300/60",
-    glow: "hover:shadow-[0_0_20px_rgba(148,163,184,0.2)]",
   },
   3: {
     badge: "bg-orange-600/20 text-orange-400 border-orange-600/40",
     border: "border-orange-600/30 hover:border-orange-400/60",
-    glow: "hover:shadow-[0_0_20px_rgba(234,88,12,0.2)]",
   },
 };
 
@@ -40,7 +38,6 @@ function rankStyle(rank: number) {
     RANK_STYLES[rank] ?? {
       badge: "bg-muted/40 text-muted-foreground border-border",
       border: "border-border hover:border-primary/40",
-      glow: "hover:shadow-[0_0_14px_rgba(0,255,255,0.12)]",
     }
   );
 }
@@ -55,6 +52,75 @@ function SkeletonCard() {
         <div className="h-3 bg-muted/25 rounded w-1/3 mt-1" />
       </div>
     </div>
+  );
+}
+
+function CardTile({ card, rank, onClick }: { card: CollectionCard; rank: number; onClick: () => void }) {
+  const holo = useHoloTilt<HTMLButtonElement>();
+  const styles = rankStyle(rank);
+
+  return (
+    <button
+      ref={holo.ref}
+      onClick={onClick}
+      style={holo.cardStyle}
+      {...holo.handlers}
+      className={cn(
+        "group relative rounded-xl border bg-card overflow-hidden text-left flex flex-col",
+        styles.border
+      )}
+    >
+      {/* Rank badge */}
+      <div
+        className={cn(
+          "absolute top-1.5 left-1.5 z-20 px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] font-mono font-bold border",
+          styles.badge
+        )}
+      >
+        #{rank}
+      </div>
+
+      {/* Image + holo overlay */}
+      <div className="aspect-[2.5/3.5] w-full overflow-hidden bg-[#0d0d0d] relative">
+        {card.imageUrl ? (
+          <img
+            src={card.imageUrl}
+            alt={card.name}
+            className="w-full h-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center p-2">
+            <span className="font-mono text-[9px] text-center text-muted-foreground leading-tight">{card.name}</span>
+          </div>
+        )}
+
+        {/* Holographic shimmer */}
+        <div style={holo.shimmerStyle} />
+
+        {/* PSA10 badge */}
+        {card.psa10GBP && (
+          <div className="absolute top-1.5 right-1.5 z-20 bg-background/80 backdrop-blur-sm rounded px-1 py-0.5 font-mono text-[7px] text-primary border border-primary/20">
+            PSA £{card.psa10GBP >= 1000 ? `${(card.psa10GBP / 1000).toFixed(1)}k` : card.psa10GBP.toFixed(1)}
+          </div>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div className="p-2 sm:p-2.5 flex flex-col gap-0.5 shrink-0 border-t border-border/50">
+        <span className="font-mono text-[9px] sm:text-[10px] font-semibold text-foreground truncate leading-tight">
+          {card.name}
+        </span>
+        {card.binderSetCode && (
+          <span className="font-mono text-[7px] sm:text-[8px] text-muted-foreground uppercase tracking-wide truncate">
+            {card.binderSetCode}
+          </span>
+        )}
+        <span className="font-mono text-[10px] sm:text-xs font-bold text-primary mt-0.5">
+          £{card.currentPriceGBP.toFixed(2)}
+        </span>
+      </div>
+    </button>
   );
 }
 
@@ -133,68 +199,14 @@ export default function Collection() {
       <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2.5 sm:gap-4">
         {loading
           ? Array.from({ length: 12 }).map((_, i) => <SkeletonCard key={i} />)
-          : cards.map((card, idx) => {
-              const rank = idx + 1;
-              const styles = rankStyle(rank);
-              return (
-                <button
-                  key={card.id}
-                  onClick={() => setSelectedCardId(card.id)}
-                  className={cn(
-                    "group relative rounded-xl border bg-card overflow-hidden transition-all duration-200 text-left flex flex-col hover:scale-[1.03] active:scale-[1.01]",
-                    styles.border,
-                    styles.glow
-                  )}
-                >
-                  {/* Rank badge */}
-                  <div
-                    className={cn(
-                      "absolute top-1.5 left-1.5 z-10 px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] font-mono font-bold border",
-                      styles.badge
-                    )}
-                  >
-                    #{rank}
-                  </div>
-
-                  {/* Image */}
-                  <div className="aspect-[2.5/3.5] w-full overflow-hidden bg-[#0d0d0d] relative">
-                    {card.imageUrl ? (
-                      <img
-                        src={card.imageUrl}
-                        alt={card.name}
-                        className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                        loading="lazy"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center p-2">
-                        <span className="font-mono text-[9px] text-center text-muted-foreground leading-tight">{card.name}</span>
-                      </div>
-                    )}
-                    {/* Top-right PSA10 hint */}
-                    {card.psa10GBP && (
-                      <div className="absolute top-1.5 right-1.5 bg-background/80 backdrop-blur-sm rounded px-1 py-0.5 font-mono text-[7px] text-primary border border-primary/20">
-                        PSA £{card.psa10GBP >= 1000 ? `${(card.psa10GBP / 1000).toFixed(1)}k` : card.psa10GBP.toFixed(1)}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Info footer */}
-                  <div className="p-2 sm:p-2.5 flex flex-col gap-0.5 shrink-0 border-t border-border/50">
-                    <span className="font-mono text-[9px] sm:text-[10px] font-semibold text-foreground truncate leading-tight">
-                      {card.name}
-                    </span>
-                    {card.binderSetCode && (
-                      <span className="font-mono text-[7px] sm:text-[8px] text-muted-foreground uppercase tracking-wide truncate">
-                        {card.binderSetCode}
-                      </span>
-                    )}
-                    <span className="font-mono text-[10px] sm:text-xs font-bold text-primary mt-0.5">
-                      £{card.currentPriceGBP.toFixed(2)}
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
+          : cards.map((card, idx) => (
+              <CardTile
+                key={card.id}
+                card={card}
+                rank={idx + 1}
+                onClick={() => setSelectedCardId(card.id)}
+              />
+            ))}
       </div>
 
       {!loading && cards.length === 0 && (
