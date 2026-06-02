@@ -27,9 +27,12 @@ interface ScanResult {
   name: string;
   setNumber: number;
   setTotal: number;
+  setId?: string;
+  rarity?: string;
   confidence: string;
   priceGBP: number;
   imageUrl: string | null;
+  priceNote?: string | null;
 }
 
 function captureFrame(video: HTMLVideoElement): string {
@@ -321,10 +324,17 @@ export default function Scanner() {
                   <p className="font-bold text-sm leading-tight">{scanResult.name}</p>
                   <p className="font-mono text-xs text-muted-foreground mt-0.5">
                     {String(scanResult.setNumber).padStart(3, "0")}/{scanResult.setTotal}
+                    {scanResult.setId && <span className="ml-1.5 uppercase">{scanResult.setId}</span>}
+                    {scanResult.rarity && <span className="ml-1 text-primary/70">{scanResult.rarity}</span>}
                   </p>
                 </div>
-                <div className="font-mono text-xl font-bold text-primary">
-                  £{scanResult.priceGBP.toFixed(2)}
+                <div>
+                  <div className="font-mono text-xl font-bold text-primary">
+                    {scanResult.priceGBP > 0 ? `£${scanResult.priceGBP.toFixed(2)}` : "Price N/A"}
+                  </div>
+                  {scanResult.priceNote && (
+                    <p className="font-mono text-[9px] text-yellow-400/80 mt-0.5 leading-tight">{scanResult.priceNote}</p>
+                  )}
                 </div>
               </div>
             </div>
