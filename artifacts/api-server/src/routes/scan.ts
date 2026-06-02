@@ -654,16 +654,20 @@ async function lookupCard(
       sortBySetTotal(priced)[0] ??                     // fallback: any priced
       sortBySetTotal(candidates)[0];                   // last resort: 0-priced
 
-    // IMAGE: only trust an EXACT name match — the same card has identical artwork
-    // worldwide (e.g. "Mega Greninja ex" EN Chaos Rising == JP M4). A loose match
-    // (base form for a Mega/ex) would show wrong art, so leave the image null then.
+    // IMAGE: only trust an EXACT name + EXACT number match — a true twin shares
+    // both (e.g. "Mega Greninja ex" EN Chaos Rising == JP M4). We must NOT fall
+    // back to the closest set-total card: a different Rayquaza from another set
+    // (e.g. Vivid Voltage "Amazing Burst") has totally different art. When there
+    // is no exact-number twin, leave the image null and let the validated
+    // official-art web search below fetch the real card's artwork.
     const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
     const exactName = candidates.filter(
       c => norm(c.name ?? "") === norm(name) && (c.images?.large || c.images?.small)
     );
-    const imgCard =
-      exactName.find(c => c.number === numStr || c.number === String(setNumber)) ??
-      sortBySetTotal(exactName)[0];
+    // Among exact name + exact number matches only, tie-break by closest set
+    // total (never a loose fallback — that was the wrong-art bug).
+    const numMatches = exactName.filter(c => c.number === numStr || c.number === String(setNumber));
+    const imgCard = sortBySetTotal(numMatches)[0];
     const imageUrl = imgCard?.images?.large ?? imgCard?.images?.small ?? null;
 
     if (priceCard || imageUrl) {
