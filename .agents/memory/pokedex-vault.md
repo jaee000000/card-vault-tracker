@@ -27,6 +27,11 @@ description: Durable gotchas for the Pokémon card tracker — pricing source, b
 # Scan animation is narrated, not real phases
 - The AI identify is ONE API call. The 3-pass UI (name → set/number → artwork) is purely visual: scanPhase state driven by timers, with a MIN_SCAN_MS floor so a fast response still shows all passes. Don't mistake it for 3 separate backend calls.
 
-# Graded values (PSA 10 / BGS Pristine 10) are AI-estimated
-- `GET /api/cards/:id/graded-values` uses gpt-4o (json_object) to ESTIMATE psa10 & bgs10 in GBP from the card's raw price — there is no free graded-sales API. Server clamps psa10>=raw, bgs10>=psa10; UI badges it "AI Estimate · <confidence> conf." so it's never presented as real sold data.
-- CardDetailPanel fetches it on sheet open via plain fetch (not the generated client), with a cancelled flag for stale-response safety. Same relative `/api/...` pattern as scan set-info.
+# Graded values (PSA 10 / BGS Pristine 10) — live web-search prices
+- `GET /api/cards/:id/graded-values` first tries `gpt-4o-search-preview` (via raw `fetch()` to `/v1/chat/completions`, NOT OpenAI SDK — SDK types don't support the model). Returns `{raw, psa10, bgs10, confidence, source}` where source is `"web-search" | "ai-estimate" | "cached"`.
+- Web-search path: NO upper cap (real prices can be 100×+ raw for rare cards). Only floor applied: psa10 >= raw, bgs10 >= psa10.
+- AI fallback path (when search fails or returns no price): standard gpt-4o with `response_format: json_object`; caps at raw×60 / psa10×5 to prevent hallucinations.
+- `gpt-4o-search-preview` uses `web_search_options: {search_context_size: "low"}`. Does NOT support `response_format: json_object` — must use `extractJsonFromText()` to parse JSON from prose.
+- `source` field is now tracked directly in `GradedEstimate` (not inferred from confidence level). UI shows "Live Price" badge for web-search, "AI Estimate · <conf>" for fallback.
+- Values cached in `psa10_gbp`, `bgs10_gbp`, `graded_refreshed_at` columns; stale if older than `last_price_refreshed_at`.
+- CardDetailPanel fetches on sheet open via plain fetch (AbortController for cancellation). Same relative `/api/...` pattern.

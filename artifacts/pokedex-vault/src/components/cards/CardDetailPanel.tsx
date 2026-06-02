@@ -11,7 +11,7 @@ type GradedValues = {
   psa10: number;
   bgs10: number;
   confidence: "low" | "medium" | "high";
-  estimated: boolean;
+  source: "cached" | "web-search" | "ai-estimate";
 };
 
 export function CardDetailPanel({ cardId, open, onOpenChange }: { cardId: number | null, open: boolean, onOpenChange: (open: boolean) => void }) {
@@ -148,9 +148,9 @@ export function CardDetailPanel({ cardId, open, onOpenChange }: { cardId: number
                     Graded Values
                   </span>
                   {graded && (
-                    <span className="text-[9px] font-mono text-muted-foreground/70 uppercase tracking-wider flex items-center gap-1">
+                    <span className={`text-[9px] font-mono uppercase tracking-wider flex items-center gap-1 ${graded.source === "web-search" ? "text-primary/80" : "text-muted-foreground/70"}`}>
                       <Sparkles className="w-2.5 h-2.5 text-primary" />
-                      AI Estimate · {graded.confidence} conf.
+                      {graded.source === "web-search" ? "Live Price" : `AI Estimate · ${graded.confidence} conf.`}
                     </span>
                   )}
                 </div>
