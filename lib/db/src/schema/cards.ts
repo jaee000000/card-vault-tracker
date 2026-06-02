@@ -13,6 +13,9 @@ export const cardsTable = pgTable("cards", {
   imageUrl: text("image_url"),
   assignedBinderId: integer("assigned_binder_id").notNull().references(() => bindersTable.id, { onDelete: "cascade" }),
   lastPriceRefreshedAt: timestamp("last_price_refreshed_at"),
+  psa10GBP: numeric("psa10_gbp", { precision: 10, scale: 2 }),
+  bgs10GBP: numeric("bgs10_gbp", { precision: 10, scale: 2 }),
+  gradedRefreshedAt: timestamp("graded_refreshed_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

@@ -63,8 +63,11 @@ function formatCard(c: typeof cardsTable.$inferSelect) {
   return {
     ...c,
     currentPriceGBP: Number(c.currentPriceGBP),
+    psa10GBP: c.psa10GBP != null ? Number(c.psa10GBP) : null,
+    bgs10GBP: c.bgs10GBP != null ? Number(c.bgs10GBP) : null,
     createdAt: c.createdAt.toISOString(),
     lastPriceRefreshedAt: c.lastPriceRefreshedAt?.toISOString() ?? null,
+    gradedRefreshedAt: c.gradedRefreshedAt?.toISOString() ?? null,
   };
 }
 
@@ -196,6 +199,44 @@ router.post("/backfill-images", async (req, res) => {
   res.json({ scanned: cards.length, updated, failures });
 });
 
+// Quick Look: every card across all binders, with graded values resolved,
+// sorted by PSA 10 value (highest → lowest). Missing/stale graded values are
+// estimated on demand with limited concurrency, then cached for next time.
+// NOTE: must be registered before "/:id" so it isn't captured as an id param.
+router.get("/quick-look", async (_req, res) => {
+  const cards = await db.select().from(cardsTable);
+  const stale = cards.filter(gradedIsStale);
+
+  const CONCURRENCY = 4;
+  for (let i = 0; i < stale.length; i += CONCURRENCY) {
+    await Promise.all(
+      stale.slice(i, i + CONCURRENCY).map(async (c) => {
+        try {
+          await ensureGradedValues(c);
+        } catch (e) {
+          console.warn(`Graded estimate failed for card ${c.id}:`, e);
+        }
+      })
+    );
+  }
+
+  const fresh = await db.select().from(cardsTable);
+  const binders = await db.select().from(bindersTable);
+  const binderMap = new Map(binders.map((b) => [b.id, b]));
+
+  const result = fresh
+    .map((c) => {
+      const formatted = formatCard(c);
+      const binder = binderMap.get(c.assignedBinderId);
+      // Sort key: PSA 10 value, falling back to raw when AI estimate is unavailable.
+      const sortValue = formatted.psa10GBP ?? formatted.currentPriceGBP;
+      return { ...formatted, binderName: binder?.name ?? null, binderSetCode: binder?.setCode ?? null, sortValue };
+    })
+    .sort((a, b) => b.sortValue - a.sortValue);
+
+  res.json(result);
+});
+
 router.get("/:id", async (req, res) => {
   const parse = GetCardParams.safeParse({ id: Number(req.params.id) });
   if (!parse.success) {
@@ -247,9 +288,83 @@ router.delete("/:id", async (req, res) => {
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+type GradedEstimate = { psa10: number; bgs10: number; confidence: "low" | "medium" | "high" };
+
 // AI-estimated graded values (PSA 10 Gem Mint & BGS Pristine 10 / Black Label).
 // Real graded sales data has no free API, so we use the model's hobby knowledge
 // to estimate the typical premium over the card's raw market value.
+async function estimateGradedValues(
+  card: typeof cardsTable.$inferSelect,
+  binder: typeof bindersTable.$inferSelect | undefined
+): Promise<GradedEstimate> {
+  const raw = Number(card.currentPriceGBP);
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0.2,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a Pokémon TCG grading-market analyst. Given a card and its RAW (ungraded) market value in GBP, " +
+          "estimate the current secondary-market value of the card in two top grades, in GBP. " +
+          "PSA 10 = Gem Mint. BGS 10 = BGS Black Label / Pristine 10 (rarer and worth more than PSA 10). " +
+          "Base your multiples on real hobby norms: PSA 10 is typically ~2x-8x raw (higher for vintage/chase, lower for bulk modern), " +
+          "and BGS Pristine 10 is typically 1.3x-3x the PSA 10 value. Account for set, rarity, age and demand. " +
+          'Respond ONLY with JSON: {"psa10": <number>, "bgs10": <number>, "confidence": "low"|"medium"|"high"}. Values are GBP numbers, no symbols.',
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          name: card.name,
+          setNumber: card.setNumber,
+          setTotal: card.setTotal,
+          setCode: binder?.setCode ?? null,
+          setName: binder?.name ?? null,
+          rawMarketValueGBP: raw,
+        }),
+      },
+    ],
+  });
+
+  const content = completion.choices[0]?.message?.content ?? "{}";
+  const parsed = JSON.parse(content) as { psa10?: number; bgs10?: number; confidence?: string };
+
+  let psa10 = typeof parsed.psa10 === "number" && parsed.psa10 > 0 ? parsed.psa10 : raw * 4;
+  let bgs10 = typeof parsed.bgs10 === "number" && parsed.bgs10 > 0 ? parsed.bgs10 : psa10 * 1.6;
+  // Sanity bounds: graded >= raw, BGS Pristine 10 >= PSA 10, and cap absurd
+  // hallucinations (generous ceilings still allow large vintage premiums).
+  psa10 = Math.min(Math.max(psa10, raw), Math.max(raw, 1) * 60);
+  bgs10 = Math.min(Math.max(bgs10, psa10), psa10 * 5);
+
+  return {
+    psa10: parseFloat(psa10.toFixed(2)),
+    bgs10: parseFloat(bgs10.toFixed(2)),
+    confidence: parsed.confidence === "high" || parsed.confidence === "low" ? parsed.confidence : "medium",
+  };
+}
+
+// A card's stored graded values are stale if missing or older than its last price refresh.
+function gradedIsStale(card: typeof cardsTable.$inferSelect): boolean {
+  if (card.psa10GBP == null || card.bgs10GBP == null || !card.gradedRefreshedAt) return true;
+  if (card.lastPriceRefreshedAt && card.gradedRefreshedAt < card.lastPriceRefreshedAt) return true;
+  return false;
+}
+
+async function ensureGradedValues(card: typeof cardsTable.$inferSelect) {
+  if (!gradedIsStale(card)) {
+    return { ...card, psa10GBP: card.psa10GBP, bgs10GBP: card.bgs10GBP };
+  }
+  const [binder] = await db.select().from(bindersTable).where(eq(bindersTable.id, card.assignedBinderId));
+  const est = await estimateGradedValues(card, binder);
+  const [updated] = await db
+    .update(cardsTable)
+    .set({ psa10GBP: String(est.psa10), bgs10GBP: String(est.bgs10), gradedRefreshedAt: new Date() })
+    .where(eq(cardsTable.id, card.id))
+    .returning();
+  return updated;
+}
+
 router.get("/:id/graded-values", async (req, res) => {
   const parse = GetCardParams.safeParse({ id: Number(req.params.id) });
   if (!parse.success) {
@@ -261,54 +376,15 @@ router.get("/:id/graded-values", async (req, res) => {
     res.status(404).json({ error: "Card not found" });
     return;
   }
-  const [binder] = await db.select().from(bindersTable).where(eq(bindersTable.id, card.assignedBinderId));
   const raw = Number(card.currentPriceGBP);
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
-      temperature: 0.2,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a Pokémon TCG grading-market analyst. Given a card and its RAW (ungraded) market value in GBP, " +
-            "estimate the current secondary-market value of the card in two top grades, in GBP. " +
-            "PSA 10 = Gem Mint. BGS 10 = BGS Black Label / Pristine 10 (rarer and worth more than PSA 10). " +
-            "Base your multiples on real hobby norms: PSA 10 is typically ~2x-8x raw (higher for vintage/chase, lower for bulk modern), " +
-            "and BGS Pristine 10 is typically 1.3x-3x the PSA 10 value. Account for set, rarity, age and demand. " +
-            'Respond ONLY with JSON: {"psa10": <number>, "bgs10": <number>, "confidence": "low"|"medium"|"high"}. Values are GBP numbers, no symbols.',
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            name: card.name,
-            setNumber: card.setNumber,
-            setTotal: card.setTotal,
-            setCode: binder?.setCode ?? null,
-            setName: binder?.name ?? null,
-            rawMarketValueGBP: raw,
-          }),
-        },
-      ],
-    });
-
-    const content = completion.choices[0]?.message?.content ?? "{}";
-    const parsed = JSON.parse(content) as { psa10?: number; bgs10?: number; confidence?: string };
-
-    let psa10 = typeof parsed.psa10 === "number" && parsed.psa10 > 0 ? parsed.psa10 : raw * 4;
-    let bgs10 = typeof parsed.bgs10 === "number" && parsed.bgs10 > 0 ? parsed.bgs10 : psa10 * 1.6;
-    // Sanity bounds: graded >= raw, BGS Pristine 10 >= PSA 10, and cap absurd
-    // hallucinations (generous ceilings still allow large vintage premiums).
-    psa10 = Math.min(Math.max(psa10, raw), Math.max(raw, 1) * 60);
-    bgs10 = Math.min(Math.max(bgs10, psa10), psa10 * 5);
-
+    const updated = await ensureGradedValues(card);
     res.json({
       raw: parseFloat(raw.toFixed(2)),
-      psa10: parseFloat(psa10.toFixed(2)),
-      bgs10: parseFloat(bgs10.toFixed(2)),
-      confidence: parsed.confidence === "high" || parsed.confidence === "low" ? parsed.confidence : "medium",
+      psa10: Number(updated.psa10GBP),
+      bgs10: Number(updated.bgs10GBP),
+      confidence: "medium",
       estimated: true,
     });
   } catch (err) {
