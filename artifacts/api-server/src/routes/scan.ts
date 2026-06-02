@@ -49,6 +49,38 @@ function isJapaneseSet(id: string): boolean {
   return low in JP_TO_EN || /^(sv\d+[a-z]|s\d+[a-z])/i.test(low);
 }
 
+// Common Japanese romaji → official English species names. The AI is told to
+// translate, but occasionally returns romaji (e.g. "Kairyu" instead of
+// "Dragonite"), which breaks PriceCharting/PokéTCG lookups. This is a safety net.
+const ROMAJI_TO_EN: Record<string, string> = {
+  kairyu: "Dragonite", hakuryu: "Dragonair", miniryu: "Dratini",
+  lizardon: "Charizard", lizardo: "Charmeleon", hitokage: "Charmander",
+  kamex: "Blastoise", kameil: "Wartortle", zenigame: "Squirtle",
+  fushigibana: "Venusaur", fushigisou: "Ivysaur", fushigidane: "Bulbasaur",
+  gangar: "Gengar", ghos: "Gastly", ghost: "Haunter",
+  yukimenoko: "Froslass", yukinoo: "Abomasnow",
+  gaburias: "Garchomp", bangiras: "Tyranitar", bohmander: "Salamence",
+  gekkouga: "Greninja", kabigon: "Snorlax",
+  gardie: "Growlithe", windie: "Arcanine",
+  eievui: "Eevee", booster: "Flareon", thunders: "Jolteon", showers: "Vaporeon",
+  eifie: "Espeon", blacky: "Umbreon", leafia: "Leafeon", glacia: "Glaceon",
+  nymphia: "Sylveon", houou: "Ho-Oh", sandaa: "Zapdos", fire: "Moltres",
+  freezer: "Articuno", gyarados: "Gyarados", lucario: "Lucario",
+  doraparuto: "Dragapult", mimikkyu: "Mimikyu", sarnori: "Rillaboom",
+};
+
+/** Replace any romaji species tokens with their English names (keeps Mega/ex/etc). */
+function normalizeSpeciesName(name: string): string {
+  return name
+    .split(/\s+/)
+    .map((word) => {
+      const key = word.toLowerCase().replace(/[^a-z]/g, "");
+      return ROMAJI_TO_EN[key] ?? word;
+    })
+    .join(" ")
+    .trim();
+}
+
 /** True if the Pokémon species in both names is the same (ignores prefixes like "Team Magma's") */
 function namesMatch(aiName: string, cardName: string): boolean {
   if (!aiName || !cardName) return false;
@@ -456,9 +488,10 @@ router.post("/identify", async (req, res) => {
           content: `You are a Pokémon TCG card scanner. Read ONLY what is literally printed on the card — do NOT guess or use memory.
 
 Extract these 5 fields:
-1. name — the Pokémon name in ENGLISH. You MUST read this from the printed name text at the TOP of the card (use the zoomed top crop). NEVER identify the Pokémon from its artwork — many Pokémon look alike (e.g. ice/snow Pokémon). Read the printed characters literally and translate:
-   - Japanese examples: "ドンメル"→"Numel", "リザードン"→"Charizard", "ユキメノコ"→"Froslass", "ユキノオー"→"Abomasnow"
-   - Keep the "メガ"/"Mega" prefix and the "ex"/"GX"/"V"/"VMAX"/"VSTAR" suffix EXACTLY as printed: "メガユキメノコex"→"Mega Froslass ex", "リザードンex"→"Charizard ex"
+1. name — the Pokémon name as the OFFICIAL ENGLISH species name. You MUST read this from the printed name text at the TOP of the card (use the zoomed top crop). NEVER identify the Pokémon from its artwork — many Pokémon look alike (e.g. ice/snow Pokémon). Read the printed characters literally and translate to the real English name:
+   - Use the official English species name, NEVER romaji: "カイリュー"→"Dragonite" (NOT "Kairyu"), "ゲッコウガ"→"Greninja" (NOT "Gekkouga"), "ガブリアス"→"Garchomp", "ゲンガー"→"Gengar"
+   - More examples: "ドンメル"→"Numel", "リザードン"→"Charizard", "ユキメノコ"→"Froslass", "ユキノオー"→"Abomasnow"
+   - Keep the "メガ"/"Mega" prefix and the "ex"/"GX"/"V"/"VMAX"/"VSTAR" suffix EXACTLY as printed: "メガユキメノコex"→"Mega Froslass ex", "メガカイリューex"→"Mega Dragonite ex", "リザードンex"→"Charizard ex"
 2. setNumber — integer BEFORE the slash (e.g. 224 from "224/193")
 3. setTotal — integer AFTER the slash (e.g. 193 from "224/193")
 4. setId — the small set code near those numbers (e.g. "sv2", "sv1a", "m2a", "swsh12"). Read each character individually.
@@ -497,7 +530,7 @@ If the card cannot be identified at all:
       return;
     }
 
-    const name = String(parsed.name ?? "Unknown").trim();
+    const name = normalizeSpeciesName(String(parsed.name ?? "Unknown").trim());
     const setNumber = parseInt(String(parsed.setNumber ?? "0"), 10);
     const setTotal = parseInt(String(parsed.setTotal ?? "0"), 10);
     const setId = parsed.setId ? String(parsed.setId).trim() : undefined;

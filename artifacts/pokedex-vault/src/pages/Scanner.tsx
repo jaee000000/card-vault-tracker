@@ -288,8 +288,11 @@ export default function Scanner() {
       {
         onSuccess: () => {
           queryClient.invalidateQueries();
-          toast({ title: "Card Added", description: `${cardName} added to vault.` });
-          setLocation(`/binder/${binderId}`);
+          toast({
+            title: "Card Added",
+            description: `${cardName} placed in slot ${String(scanResult.setNumber).padStart(3, "0")}.`,
+          });
+          setLocation(`/binder/${binderId}?slot=${scanResult.setNumber}`);
         },
         onError: () => {
           toast({ title: "Save Failed", variant: "destructive", description: "Could not save card." });
@@ -532,13 +535,53 @@ export default function Scanner() {
                   {/* Card frame */}
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <div className="w-[72%] aspect-[2.5/3.5] relative">
-                      <div className="absolute -top-0.5 -left-0.5 w-8 h-8 sm:w-10 sm:h-10 border-t-[3px] border-l-[3px] border-primary shadow-[0_0_10px_rgba(0,255,255,0.7)]" />
-                      <div className="absolute -top-0.5 -right-0.5 w-8 h-8 sm:w-10 sm:h-10 border-t-[3px] border-r-[3px] border-primary shadow-[0_0_10px_rgba(0,255,255,0.7)]" />
-                      <div className="absolute -bottom-0.5 -left-0.5 w-8 h-8 sm:w-10 sm:h-10 border-b-[3px] border-l-[3px] border-primary shadow-[0_0_10px_rgba(0,255,255,0.7)]" />
-                      <div className="absolute -bottom-0.5 -right-0.5 w-8 h-8 sm:w-10 sm:h-10 border-b-[3px] border-r-[3px] border-primary shadow-[0_0_10px_rgba(0,255,255,0.7)]" />
+                      {(() => {
+                        const scanning = status === "scanning";
+                        const corner = scanning ? "animate-[corner-pulse_1s_ease-in-out_infinite]" : "";
+                        return (
+                          <>
+                            <div className={`absolute -top-0.5 -left-0.5 w-8 h-8 sm:w-10 sm:h-10 border-t-[3px] border-l-[3px] border-primary shadow-[0_0_10px_rgba(0,255,255,0.7)] ${corner}`} />
+                            <div className={`absolute -top-0.5 -right-0.5 w-8 h-8 sm:w-10 sm:h-10 border-t-[3px] border-r-[3px] border-primary shadow-[0_0_10px_rgba(0,255,255,0.7)] ${corner}`} />
+                            <div className={`absolute -bottom-0.5 -left-0.5 w-8 h-8 sm:w-10 sm:h-10 border-b-[3px] border-l-[3px] border-primary shadow-[0_0_10px_rgba(0,255,255,0.7)] ${corner}`} />
+                            <div className={`absolute -bottom-0.5 -right-0.5 w-8 h-8 sm:w-10 sm:h-10 border-b-[3px] border-r-[3px] border-primary shadow-[0_0_10px_rgba(0,255,255,0.7)] ${corner}`} />
+                          </>
+                        );
+                      })()}
 
                       {status === "scanning" && (
-                        <div className="absolute top-0 left-0 w-full h-[3px] bg-primary shadow-[0_0_14px_#00ffff] animate-[scan_1.4s_ease-in-out_infinite]" />
+                        <div className="absolute inset-0 overflow-hidden rounded-sm">
+                          {/* Tinted analysis wash */}
+                          <div className="absolute inset-0 bg-primary/10" />
+
+                          {/* Scanline grid */}
+                          <div
+                            className="absolute inset-0 animate-[grid-pulse_1.6s_ease-in-out_infinite]"
+                            style={{
+                              backgroundImage:
+                                "repeating-linear-gradient(0deg, rgba(0,255,255,0.25) 0px, rgba(0,255,255,0.25) 1px, transparent 1px, transparent 14px), repeating-linear-gradient(90deg, rgba(0,255,255,0.18) 0px, rgba(0,255,255,0.18) 1px, transparent 1px, transparent 14px)",
+                            }}
+                          />
+
+                          {/* Sweeping scan band */}
+                          <div className="absolute inset-x-0 h-1/3 animate-[scan-sweep_1.5s_ease-in-out_infinite]">
+                            <div
+                              className="w-full h-full"
+                              style={{
+                                background:
+                                  "linear-gradient(to bottom, transparent, rgba(0,255,255,0.28) 60%, rgba(0,255,255,0.55) 100%)",
+                              }}
+                            />
+                            <div className="w-full h-[2px] bg-primary shadow-[0_0_18px_4px_#00ffff]" />
+                          </div>
+
+                          {/* Analyzing label */}
+                          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                            <Sparkles className="w-7 h-7 text-primary animate-pulse drop-shadow-[0_0_8px_#00ffff]" />
+                            <span className="font-mono text-[10px] sm:text-xs uppercase tracking-[0.25em] text-primary drop-shadow-[0_0_6px_#00ffff]">
+                              Analyzing
+                            </span>
+                          </div>
+                        </div>
                       )}
                     </div>
                   </div>

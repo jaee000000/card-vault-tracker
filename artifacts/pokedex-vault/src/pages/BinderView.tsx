@@ -4,10 +4,10 @@ import {
   useGetBinderStats,
   getGetBinderStatsQueryKey,
 } from "@workspace/api-client-react";
-import { useParams, Link } from "wouter";
+import { useParams, Link, useSearch } from "wouter";
 import { ChevronLeft, ChevronRight, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { QuickAddCardDialog } from "@/components/cards/QuickAddCardDialog";
@@ -15,10 +15,12 @@ import { CardDetailPanel } from "@/components/cards/CardDetailPanel";
 
 export default function BinderView() {
   const params = useParams();
+  const search = useSearch();
   const binderId = parseInt(params.id || "0", 10);
   const [currentPage, setCurrentPage] = useState(0);
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<number | null>(null);
+  const [highlightSlot, setHighlightSlot] = useState<number | null>(null);
 
   const { data: binder, isLoading } = useGetBinder(binderId, {
     query: { enabled: !!binderId, queryKey: getGetBinderQueryKey(binderId) },
@@ -30,10 +32,31 @@ export default function BinderView() {
 
   const cards = binder?.cards || [];
   const setTotal = binder?.setTotal || 9;
-  const totalPages = Math.ceil(setTotal / 9);
+  // Secret-rare / alt-art cards can be numbered above the printed set total
+  // (e.g. 224/193). Extend the binder so those cards still have a slot.
+  const maxCardNumber = cards.reduce((m, c) => Math.max(m, c.setNumber), 0);
+  const effectiveTotal = Math.max(setTotal, maxCardNumber);
+  const totalPages = Math.ceil(effectiveTotal / 9);
 
   const getCardForSlot = (slotNumber: number) =>
     cards.find((c) => c.setNumber === slotNumber);
+
+  // Deep-link: ?slot=126 jumps to that card's page and briefly highlights it.
+  // One-shot per slot value so a background refetch can't yank the user back
+  // to this page after they navigate away.
+  const consumedSlotRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!binder) return;
+    const raw = new URLSearchParams(search).get("slot") ?? "";
+    const slot = parseInt(raw, 10);
+    if (!slot || consumedSlotRef.current === raw) return;
+    consumedSlotRef.current = raw;
+    const clamped = Math.min(Math.max(slot, 1), effectiveTotal);
+    setCurrentPage(Math.floor((clamped - 1) / 9));
+    setHighlightSlot(clamped);
+    const t = setTimeout(() => setHighlightSlot(null), 2600);
+    return () => clearTimeout(t);
+  }, [search, binder, effectiveTotal]);
 
   if (isLoading) {
     return (
@@ -100,11 +123,14 @@ export default function BinderView() {
             <div className="grid grid-cols-3 grid-rows-3 gap-1.5 sm:gap-3 flex-1 min-h-0">
               {Array.from({ length: 9 }).map((_, i) => {
                 const slotNumber = currentPage * 9 + i + 1;
-                if (slotNumber > binder.setTotal) {
+                const card = getCardForSlot(slotNumber);
+                // Beyond the printed total, only render slots that hold a card
+                // (secret rares / alt arts). Pure padding slots stay blank.
+                if (slotNumber > binder.setTotal && !card) {
                   return <div key={i} className="rounded bg-background/10" />;
                 }
 
-                const card = getCardForSlot(slotNumber);
+                const isHighlighted = highlightSlot === slotNumber;
 
                 return (
                   <button
@@ -116,7 +142,9 @@ export default function BinderView() {
                       "relative group rounded-lg overflow-hidden aspect-[2.5/3.5] transition-all duration-200 flex flex-col w-full h-full",
                       card
                         ? "border-2 border-primary/30 hover:border-primary bg-background hover:scale-[1.02] shadow-[0_0_10px_rgba(0,255,255,0.05)] hover:shadow-[0_0_16px_rgba(0,255,255,0.2)] active:scale-[1.01]"
-                        : "border border-dashed border-border hover:border-muted-foreground bg-background/40 opacity-60 hover:opacity-100 flex items-center justify-center active:opacity-80"
+                        : "border border-dashed border-border hover:border-muted-foreground bg-background/40 opacity-60 hover:opacity-100 flex items-center justify-center active:opacity-80",
+                      isHighlighted &&
+                        "!border-primary border-2 z-10 animate-[slot-pop_2.4s_ease-out] shadow-[0_0_22px_rgba(0,255,255,0.55)]"
                     )}
                   >
                     {card ? (

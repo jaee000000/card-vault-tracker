@@ -150,7 +150,8 @@ router.post("/backfill-images", async (req, res) => {
   if (process.env.NODE_ENV === "production") {
     const token = process.env.ADMIN_TOKEN;
     if (!token || req.get("x-admin-token") !== token) {
-      return res.status(403).json({ error: "Forbidden" });
+      res.status(403).json({ error: "Forbidden" });
+      return;
     }
   }
   const cards = await db
