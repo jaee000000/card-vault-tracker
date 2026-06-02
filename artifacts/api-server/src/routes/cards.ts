@@ -19,24 +19,41 @@ const USD_TO_GBP = 0.79;
 const EUR_TO_GBP = 0.85;
 
 async function fetchLivePriceGBP(name: string, setNumber: number, setCode?: string): Promise<number> {
+  const sc = setCode?.toLowerCase();
   try {
     const numStr = String(setNumber);
-    const queries = [
+    // When a setCode is known, try the set-scoped query first so we don't
+    // accidentally match a same-named card from a different (often English) set.
+    const queries: string[] = [];
+    if (sc) queries.push(`name:"${name}" number:${numStr} set.id:${sc}`);
+    queries.push(
       `name:"${name}" number:${numStr}`,
       `name:"${name.split(" ")[0]}" number:${numStr}`,
-      `number:${numStr}${setCode ? ` set.id:${setCode.toLowerCase()}` : ""}`,
-    ];
+    );
 
     for (const q of queries) {
-      const url = `https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(q)}&pageSize=10&select=tcgplayer,cardmarket,name,number`;
+      const url = `https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(q)}&pageSize=10&select=tcgplayer,cardmarket,name,number,set`;
       const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
       if (!res.ok) continue;
 
-      const json = await res.json() as { data: Array<{ tcgplayer?: { prices?: Record<string, { market?: number }> }, cardmarket?: { prices?: { averageSellPrice?: number } } }> };
+      const json = await res.json() as {
+        data: Array<{
+          set?: { id?: string };
+          tcgplayer?: { prices?: Record<string, { market?: number }> };
+          cardmarket?: { prices?: { averageSellPrice?: number } };
+        }>;
+      };
       const cards = json.data ?? [];
       if (!cards.length) continue;
 
       for (const card of cards) {
+        // If we have a setCode, reject cards whose set ID doesn't match.
+        // This prevents English set prices polluting Japanese-set cards.
+        if (sc && card.set?.id) {
+          const cardSet = card.set.id.toLowerCase();
+          if (cardSet !== sc && !cardSet.includes(sc) && !sc.includes(cardSet)) continue;
+        }
+
         const tcgPrices = card.tcgplayer?.prices;
         if (tcgPrices) {
           const usd =
@@ -57,7 +74,7 @@ async function fetchLivePriceGBP(name: string, setNumber: number, setCode?: stri
 
   // PokéTCG had no data — try PriceCharting (price1 = real ungraded market price)
   try {
-    const pc = await priceChartingLookup(name, setNumber, setCode?.toLowerCase());
+    const pc = await priceChartingLookup(name, setNumber, sc);
     if (pc?.priceGBP && pc.priceGBP > 0) {
       console.log(`[price] pricecharting fallback: "${name}" £${pc.priceGBP}`);
       return pc.priceGBP;
