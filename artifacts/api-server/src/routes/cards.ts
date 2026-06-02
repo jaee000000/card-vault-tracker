@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { db, cardsTable, bindersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, or, isNull } from "drizzle-orm";
+import { findCardImage } from "./scan";
 import {
   CreateCardBody,
   UpdateCardBody,
@@ -140,6 +141,57 @@ router.post("/resync-all", async (_req, res) => {
     .limit(0);
 
   res.json({ updated, message: `Refreshed prices for ${updated} cards.` });
+});
+
+// Backfill card images for any saved cards missing one
+router.post("/backfill-images", async (req, res) => {
+  // Admin-only bulk write. In production require a matching ADMIN_TOKEN header;
+  // in development it stays open for local seeding convenience.
+  if (process.env.NODE_ENV === "production") {
+    const token = process.env.ADMIN_TOKEN;
+    if (!token || req.get("x-admin-token") !== token) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+  }
+  const cards = await db
+    .select()
+    .from(cardsTable)
+    .where(or(isNull(cardsTable.imageUrl), eq(cardsTable.imageUrl, "")));
+  const binders = await db.select().from(bindersTable);
+  const binderMap = new Map(binders.map((b) => [b.id, b.setCode]));
+
+  let updated = 0;
+  const failures: string[] = [];
+  for (const card of cards) {
+    try {
+      const setCode = binderMap.get(card.assignedBinderId) ?? undefined;
+      const { imageUrl, priceGBP } = await findCardImage(
+        card.name,
+        card.setNumber,
+        card.setTotal,
+        setCode
+      );
+      if (imageUrl) {
+        await db
+          .update(cardsTable)
+          .set({
+            imageUrl,
+            // only overwrite a zero/missing price
+            ...(Number(card.currentPriceGBP) <= 0 && priceGBP > 0
+              ? { currentPriceGBP: String(priceGBP), lastPriceRefreshedAt: new Date() }
+              : {}),
+          })
+          .where(eq(cardsTable.id, card.id));
+        updated++;
+      } else {
+        failures.push(`${card.name} (${card.setNumber}/${card.setTotal})`);
+      }
+    } catch (e) {
+      failures.push(`${card.name}: ${(e as Error).message}`);
+    }
+  }
+
+  res.json({ scanned: cards.length, updated, failures });
 });
 
 router.get("/:id", async (req, res) => {

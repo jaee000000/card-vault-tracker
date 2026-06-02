@@ -31,3 +31,15 @@ Mitigations in place:
 
 **How to apply:** when scanner accuracy complaints come in, the fix is almost always the prompt/crops (reading),
 not the lookup. Verify a card's real price by querying PriceCharting directly and reading `price1`.
+
+## Japanese scan: PriceCharting must run FIRST (Phase 0)
+`lookupCard` in scan.ts: for Japanese sets (jpSet truthy), run `priceChartingLookup` BEFORE the English-equivalent phases and return immediately on a hit. Otherwise the English AR/secret-rare phases match an English same-species card and return its WRONG art + price.
+**Why:** Mega Froslass ex (224/193, M2A) returned an English Froslass image + £10.25 until PriceCharting was reordered ahead of the English phases -> correct image + £4.88.
+
+## PokeTCG quoted multi-word name search returns nothing
+`name:"Mewtwo VMAX"` (quoted, multi-word) returns ZERO results from api.pokemontcg.io, even though the card exists. `name:mewtwo*` (wildcard on first word) works.
+**How to apply:** In `findCardImage`, after a quoted full-name search comes back empty, fall back to `name:<firstWord>*` (pageSize ~150), then prefer the exact normalized variant (e.g. norm name === "mewtwovmax") before looser `namesMatch`, then sort by closest set total.
+
+## Backfill route for missing card images
+`POST /api/cards/backfill-images` (cards.ts) fills cards with null/empty image_url via `findCardImage`; only overwrites price when current <=0. Idempotent (skips rows that already have an image). Guarded in production by `x-admin-token` header === `ADMIN_TOKEN` env; open in dev for local seeding.
+**Note:** seed/demo cards use fictional set names (Chaos Rising/CHR, Abyss Eye/ABY, M2a Mega Dream ex/M2A) with numbers that don't map to real cards, so matched art is best-effort.

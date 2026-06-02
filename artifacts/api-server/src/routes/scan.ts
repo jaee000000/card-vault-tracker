@@ -202,6 +202,60 @@ async function priceChartingLookup(
   return null;
 }
 
+/**
+ * Best-effort image + price finder for backfilling existing saved cards.
+ * Japanese sets → PriceCharting (exact card). Otherwise → PokéTCG by name,
+ * preferring the result whose set total matches; falls back to any match.
+ */
+export async function findCardImage(
+  name: string,
+  setNumber: number,
+  setTotal: number,
+  setCode?: string
+): Promise<{ imageUrl: string | null; priceGBP: number }> {
+  const jpSet = setCode ? isJapaneseSet(setCode) : false;
+
+  if (jpSet) {
+    const pc = await priceChartingLookup(name, setNumber, setCode);
+    if (pc && pc.imageUrl) return { imageUrl: pc.imageUrl, priceGBP: pc.priceGBP };
+  }
+
+  // PokéTCG: find a real card of this Pokémon, preferring matching set total.
+  // Quoted multi-word names (e.g. "Mewtwo VMAX") can return nothing, so fall
+  // back to a wildcard search on the first word.
+  const searchName = name.replace(/^mega\s+/i, "").trim();
+  const firstWord = searchName.split(/\s+/)[0].replace(/[^a-zA-Z0-9]/g, "");
+  let byName = await tcgFetch(`name:"${searchName}"`, 50);
+  if (!byName.length && firstWord.length > 2) {
+    byName = await tcgFetch(`name:${firstWord}*`, 150);
+  }
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const target = norm(name);
+  // Prefer the exact same variant (e.g. "Mewtwo VMAX"), then any name match
+  const exactVariant = byName.filter((c) => norm(c.name ?? "") === target);
+  const matched = exactVariant.length
+    ? exactVariant
+    : byName.filter((c) => namesMatch(name, c.name ?? ""));
+  const pool = matched.length ? matched : byName;
+  const best = pool.sort(
+    (a, b) =>
+      Math.abs((a.set?.printedTotal ?? 9999) - setTotal) -
+      Math.abs((b.set?.printedTotal ?? 9999) - setTotal)
+  )[0];
+  if (best && (best.images?.large || best.images?.small)) {
+    return {
+      imageUrl: best.images?.large ?? best.images?.small ?? null,
+      priceGBP: bestPrice(best),
+    };
+  }
+
+  // Last resort: PriceCharting without the Japanese hint
+  const pc = await priceChartingLookup(name, setNumber, setCode);
+  if (pc && pc.imageUrl) return { imageUrl: pc.imageUrl, priceGBP: pc.priceGBP };
+
+  return { imageUrl: null, priceGBP: 0 };
+}
+
 /** Convert a PriceCharting product to our price/image shape (price1 = ungraded/raw). */
 function toPrice(p: PCProduct): { priceGBP: number; imageUrl: string | null } {
   const raw = p.price1 ?? "";
@@ -232,6 +286,20 @@ async function lookupCard(
   const firstName = baseName.split(/\s+/)[0].replace(/[^a-zA-Z0-9]/g, "");
 
   const jpNote = "Japanese card — price shown is for nearest English equivalent";
+
+  // ── Phase 0: Japanese cards — PriceCharting has the EXACT card + real image ──
+  // Run this FIRST for Japanese sets, otherwise the English-equivalent phases
+  // below return a wrong-art card (e.g. an English Froslass AR for メガユキメノコex).
+  if (jpSet) {
+    const pc = await priceChartingLookup(name, setNumber, setId);
+    if (pc && (pc.priceGBP > 0 || pc.imageUrl)) {
+      return {
+        priceGBP: pc.priceGBP,
+        imageUrl: pc.imageUrl,
+        priceNote: "Price & image from PriceCharting.com",
+      };
+    }
+  }
 
   // ── Phase 1: direct set.id + number — only accept if same Pokémon ────────────
   if (enSetId) {
