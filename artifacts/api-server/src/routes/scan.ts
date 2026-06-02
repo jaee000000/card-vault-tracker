@@ -643,49 +643,43 @@ async function lookupCard(
         Math.abs((b.set?.printedTotal ?? 9999) - setTotal)
       );
 
-    // PRICE: prefer cards that share the same rarity suffix (ex/GX/V/VMAX etc.) AND
-    // have a price, so we don't pick a cheap base-form card for an "ex"/"GX" scan.
-    const suffix = /\b(ex|GX|V|VMAX|VSTAR|EX)\b/i.exec(name)?.[1]?.toLowerCase();
-    const hasSuffix = (c: TCGCard) =>
-      !suffix || (c.name ?? "").toLowerCase().includes(suffix);
-    const priced = candidates.filter(c => bestPrice(c) > 0);
-    const priceCard =
-      sortBySetTotal(priced.filter(hasSuffix))[0] ??  // best: same suffix + priced
-      sortBySetTotal(priced)[0] ??                     // fallback: any priced
-      sortBySetTotal(candidates)[0];                   // last resort: 0-priced
-
-    // IMAGE: only trust an EXACT name + EXACT number match — a true twin shares
-    // both (e.g. "Mega Greninja ex" EN Chaos Rising == JP M4). We must NOT fall
-    // back to the closest set-total card: a different Rayquaza from another set
-    // (e.g. Vivid Voltage "Amazing Burst") has totally different art. When there
-    // is no exact-number twin, leave the image null and let the validated
-    // official-art web search below fetch the real card's artwork.
+    // Both the PRICE and the IMAGE may only come from a TRUE twin — an EXACT
+    // name + EXACT number match (e.g. "Mega Greninja ex" EN Chaos Rising == JP
+    // M4). The old "closest set total" fallback was wrong for BOTH: it grabbed a
+    // different card of the same Pokémon from another set — e.g. Vivid Voltage
+    // "Amazing Burst" Rayquaza (wrong art AND £21.93 for a common holo worth
+    // ~£1.60). When there is no exact-number twin we trust neither; the live web
+    // search below supplies the real raw price and the real official art.
     const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-    const exactName = candidates.filter(
-      c => norm(c.name ?? "") === norm(name) && (c.images?.large || c.images?.small)
-    );
-    // Among exact name + exact number matches only, tie-break by closest set
-    // total (never a loose fallback — that was the wrong-art bug).
+    const exactName = candidates.filter(c => norm(c.name ?? "") === norm(name));
     const numMatches = exactName.filter(c => c.number === numStr || c.number === String(setNumber));
-    const imgCard = sortBySetTotal(numMatches)[0];
-    const imageUrl = imgCard?.images?.large ?? imgCard?.images?.small ?? null;
+    const twin = sortBySetTotal(numMatches)[0];
+    // Only the exact twin's price/art are trustworthy.
+    let priceGBP = twin ? bestPrice(twin) : 0;
+    let img = twin?.images?.large ?? twin?.images?.small ?? null;
+    let note: string | null =
+      priceGBP > 0 ? (jpSet ? "Japanese card — price estimate from English equivalent" : null) : null;
 
-    if (priceCard || imageUrl) {
-      let priceGBP = priceCard ? bestPrice(priceCard) : 0;
-      let note = jpSet
-        ? "Japanese card — price estimate from English equivalent"
-        : "Approximate price — exact card not found";
-      // No usable price from the English twin — get a real one via live web search.
-      if (priceGBP === 0) {
-        const wp = await webSearchRawPriceGBP(name, setNumber, setTotal, setId);
+    // Whatever the twin couldn't supply, get from live web search — in parallel.
+    const needPrice = priceGBP === 0;
+    const needImg = !img;
+    if (needPrice || needImg) {
+      const [wp, wi] = await Promise.all([
+        needPrice ? webSearchRawPriceGBP(name, setNumber, setTotal, setId) : Promise.resolve(0),
+        needImg ? webSearchOfficialImage(name, setNumber, setTotal, setId) : Promise.resolve(null),
+      ]);
+      if (needPrice) {
         if (wp > 0) {
           priceGBP = wp;
           note = "Price from live web search (sold listings)";
+        } else {
+          note = jpSet ? "Japanese card — not in price database" : null;
         }
       }
-      // No official art from the English twin — find it via live web search.
-      let img = imageUrl;
-      if (!img) img = await webSearchOfficialImage(name, setNumber, setTotal, setId);
+      if (needImg && wi) img = wi;
+    }
+
+    if (priceGBP > 0 || img) {
       return { priceGBP, psa10GBP: null, imageUrl: img, priceNote: note };
     }
   }
