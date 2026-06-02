@@ -15,7 +15,7 @@ interface HoloState {
   active: boolean;
 }
 
-export function useHoloTilt<T extends HTMLElement = HTMLElement>(maxAngle = 35, perspectivePx = 650) {
+export function useHoloTilt<T extends HTMLElement = HTMLElement>(maxAngle = 35, perspectivePx = 650, enabled = true) {
   const ref = useRef<T>(null);
 
   // target values set from mouse/touch
@@ -70,10 +70,14 @@ export function useHoloTilt<T extends HTMLElement = HTMLElement>(maxAngle = 35, 
   }, []);
 
   useEffect(() => {
+    if (!enabled) {
+      if (raf.current) cancelAnimationFrame(raf.current);
+      return;
+    }
     t0.current = performance.now();
     raf.current = requestAnimationFrame(tick);
     return () => { if (raf.current) cancelAnimationFrame(raf.current); };
-  }, [tick]);
+  }, [tick, enabled]);
 
   const compute = useCallback((clientX: number, clientY: number) => {
     const el = ref.current;

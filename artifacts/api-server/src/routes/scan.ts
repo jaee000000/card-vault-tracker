@@ -46,7 +46,7 @@ const JP_SET_TO_PC: Record<string, string> = {
   "s10a": "dark phantasma",
 };
 
-function isJapaneseSet(id: string): boolean {
+export function isJapaneseSet(id: string): boolean {
   const low = id.toLowerCase();
   return low in JP_TO_EN || /^(sv\d+[a-z]|s\d+[a-z]|m\d+[a-z]?)/i.test(low);
 }

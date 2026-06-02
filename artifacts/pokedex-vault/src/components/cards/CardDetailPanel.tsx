@@ -9,17 +9,42 @@ import { createPortal } from "react-dom";
 import { useLocation } from "wouter";
 import { useHoloTilt } from "@/hooks/use-holo-tilt";
 
+// True for URLs that point at a real, correctly-sized card-art host. False for
+// the user's own camera scan photo (a data: URI), which can be a 12MP image that
+// crashes low-RAM mobile tabs if rendered at full size.
+function isProperArtUrl(url: string): boolean {
+  return (
+    url.includes("scrydex.com") ||
+    url.includes("pokemontcg.io") ||
+    url.includes("pricecharting.com") ||
+    url.includes("limitlesstcg.com") ||
+    url.includes("limitlesstcg.nyc3.cdn.digitaloceanspaces.com")
+  );
+}
+
 function FullscreenCardViewer({ cardId, imageUrl, name, onClose }: { cardId: number; imageUrl: string; name: string; onClose: () => void }) {
-  const [hiResUrl, setHiResUrl] = useState(imageUrl);
+  // Start with the image only if it's already proper art; otherwise hold off
+  // rendering until the server resolves real art (see effect below).
+  const [hiResUrl, setHiResUrl] = useState(() => (isProperArtUrl(imageUrl) ? imageUrl : ""));
   const [imgLoaded, setImgLoaded] = useState(false);
 
   useEffect(() => {
-    setHiResUrl(imageUrl);
     setImgLoaded(false);
-    fetch(`/api/cards/${cardId}/hires-image`)
+    // Already proper art — show it directly, no round trip.
+    if (isProperArtUrl(imageUrl)) {
+      setHiResUrl(imageUrl);
+      return;
+    }
+    // Not proper art (likely the user's large camera photo). Don't render it at
+    // full size — resolve real, correctly-sized art first, then show that. Only
+    // fall back to the original if the server can't find anything better.
+    setHiResUrl("");
+    const controller = new AbortController();
+    fetch(`/api/cards/${cardId}/hires-image`, { signal: controller.signal })
       .then(r => r.ok ? r.json() : null)
-      .then((d: { hiResUrl: string } | null) => { if (d?.hiResUrl) setHiResUrl(d.hiResUrl); })
-      .catch(() => {});
+      .then((d: { hiResUrl: string } | null) => { setHiResUrl(d?.hiResUrl || imageUrl); })
+      .catch(() => setHiResUrl(imageUrl));
+    return () => controller.abort();
   }, [cardId, imageUrl]);
 
   useEffect(() => {
@@ -51,17 +76,19 @@ function FullscreenCardViewer({ cardId, imageUrl, name, onClose }: { cardId: num
         style={{ height: "80vh", aspectRatio: "2.5/3.5", width: "auto", position: "relative" }}
         className="rounded-2xl overflow-hidden shadow-[0_30px_90px_rgba(0,0,0,0.95)]"
       >
-        {!imgLoaded && (
+        {(!hiResUrl || !imgLoaded) && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-20">
             <div className="w-6 h-6 rounded-full border-2 border-primary border-t-transparent animate-spin" />
           </div>
         )}
-        <img
-          src={hiResUrl}
-          alt={name}
-          className="w-full h-full object-cover block"
-          onLoad={() => setImgLoaded(true)}
-        />
+        {hiResUrl && (
+          <img
+            src={hiResUrl}
+            alt={name}
+            className="w-full h-full object-cover block"
+            onLoad={() => setImgLoaded(true)}
+          />
+        )}
       </div>
 
       <p className="font-mono text-[9px] text-white/20 mt-5 select-none">Tap outside to close</p>
@@ -82,8 +109,11 @@ export function CardDetailPanel({ cardId, open, onOpenChange }: { cardId: number
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
-  const holo = useHoloTilt<HTMLDivElement>(20);
   const [fullscreen, setFullscreen] = useState(false);
+  // Pause the holo-tilt animation loop (a ~60fps setState) while the fullscreen
+  // viewer is open — otherwise the panel keeps re-rendering 60×/s behind a second
+  // full-size image decode, which can crash the browser tab on mobile.
+  const holo = useHoloTilt<HTMLDivElement>(20, 650, !fullscreen);
 
   const { data: card, isLoading } = useGetCard(cardId || 0, {
     query: { enabled: !!cardId, queryKey: getGetCardQueryKey(cardId || 0) }
@@ -131,11 +161,7 @@ export function CardDetailPanel({ cardId, open, onOpenChange }: { cardId: number
   useEffect(() => {
     if (!open || !cardId || !card) return;
     const img = card.imageUrl ?? "";
-    const isProperArt =
-      img.includes("scrydex.com") ||
-      img.includes("pokemontcg.io") ||
-      img.includes("pricecharting.com");
-    if (isProperArt) return;
+    if (isProperArtUrl(img)) return;
     const controller = new AbortController();
     fetch(`/api/cards/${cardId}/hires-image`, { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : null))

@@ -2,7 +2,7 @@ import { Router } from "express";
 import OpenAI from "openai";
 import { db, cardsTable, bindersTable } from "@workspace/db";
 import { eq, or, isNull } from "drizzle-orm";
-import { findCardImage, priceChartingLookup, webSearchRawPriceGBP, webSearchOfficialImage, limitlessJpImageUrl } from "./scan";
+import { findCardImage, priceChartingLookup, webSearchRawPriceGBP, webSearchOfficialImage, limitlessJpImageUrl, isJapaneseSet } from "./scan";
 import {
   CreateCardBody,
   UpdateCardBody,
@@ -94,6 +94,10 @@ export async function fetchLivePriceGBP(name: string, setNumber: number, setCode
 
   return 0;
 }
+
+// Hosts that serve real, correct card art (as opposed to the user's own scan
+// photo data: URI). A card already on one of these must never be "re-healed".
+const PROPER_ART_HOST = /images\.pokemontcg\.io|scrydex\.com|pricecharting\.com|limitlesstcg\.com|limitlesstcg\.nyc3\.cdn\.digitaloceanspaces\.com/;
 
 function formatCard(c: typeof cardsTable.$inferSelect) {
   return {
@@ -676,23 +680,32 @@ router.get("/:id/hires-image", async (req, res) => {
   const [card] = await db.select().from(cardsTable).where(eq(cardsTable.id, id)).limit(1);
   if (!card) return res.status(404).json({ error: "not found" });
 
-  if (card.imageUrl?.includes("images.pokemontcg.io")) {
+  // Already proper card-art? Return it unchanged and NEVER re-resolve. Re-running
+  // the lookup can REPLACE correct art (e.g. a Japanese card's exact LimitlessTCG
+  // art) with a wrong same-number English card, because the PokéTCG fallback
+  // matches on name+number with no set constraint. This is what caused a card to
+  // "change to the wrong one" the moment its detail panel opened.
+  if (card.imageUrl && PROPER_ART_HOST.test(card.imageUrl)) {
     return res.json({ hiResUrl: card.imageUrl });
   }
 
-  let hiResUrl = await tcgHiResLookup(card.name, card.setNumber);
-  // PokéTCG had no match — for Japanese-only cards (and in prod, where
-  // PriceCharting is blocked) resolve the exact official art. Try the
-  // deterministic LimitlessTCG JP database first (real, hot-linkable art), then
-  // fall back to the AI official-art web search as a last resort.
+  // Resolve real art for a card still showing the user's scan photo.
+  const [binder] = await db.select().from(bindersTable).where(eq(bindersTable.id, card.assignedBinderId));
+  const jp = binder?.setCode ? isJapaneseSet(binder.setCode) : false;
+
+  // For Japanese sets the deterministic, set-scoped LimitlessTCG lookup is the
+  // EXACT card — prefer it over PokéTCG's name+number lookup, which has no set
+  // constraint and would grab a wrong same-number English card.
+  let hiResUrl: string | null = null;
+  if (jp && binder?.setCode) {
+    hiResUrl = await limitlessJpImageUrl(binder.setCode, card.setNumber);
+  }
+  if (!hiResUrl && !jp) {
+    hiResUrl = await tcgHiResLookup(card.name, card.setNumber);
+  }
+  // Last resort (and only sensible path left for JP cards LimitlessTCG missed).
   if (!hiResUrl) {
-    const [binder] = await db.select().from(bindersTable).where(eq(bindersTable.id, card.assignedBinderId));
-    if (binder?.setCode) {
-      hiResUrl = await limitlessJpImageUrl(binder.setCode, card.setNumber);
-    }
-    if (!hiResUrl) {
-      hiResUrl = await webSearchOfficialImage(card.name, card.setNumber, card.setTotal, binder?.setCode);
-    }
+    hiResUrl = await webSearchOfficialImage(card.name, card.setNumber, card.setTotal, binder?.setCode);
   }
   if (hiResUrl) {
     await db.update(cardsTable).set({ imageUrl: hiResUrl }).where(eq(cardsTable.id, id));
