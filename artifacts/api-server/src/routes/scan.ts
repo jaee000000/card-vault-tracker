@@ -22,6 +22,28 @@ const JP_TO_EN: Record<string, string> = {
   "s3a": "swsh3",  "s2a": "swsh2",
 };
 
+// Japanese set ID → PriceCharting console name keyword (for better search precision)
+const JP_SET_TO_PC: Record<string, string> = {
+  "m2a": "mega dream",
+  "m2b": "mega dream",
+  "sv1a": "triplet beat",
+  "sv2a": "clay burst",
+  "sv2b": "snow hazard",
+  "sv2c": "thunder clap",
+  "sv2d": "ancient roar",
+  "sv3a": "scarlet ex",
+  "sv4a": "future flash",
+  "sv5a": "wild force",
+  "sv5k": "crimson haze",
+  "sv5m": "night wanderer",
+  "sv6a": "transformation mask",
+  "sv7a": "stellar miracle",
+  "sv8a": "super electric breaker",
+  "s12a": "vstar universe",
+  "s11a": "lost abyss",
+  "s10a": "dark phantasma",
+};
+
 function isJapaneseSet(id: string): boolean {
   const low = id.toLowerCase();
   return low in JP_TO_EN || /^(sv\d+[a-z]|s\d+[a-z])/i.test(low);
@@ -42,6 +64,17 @@ type TCGCard = {
   images?: { small?: string; large?: string };
   tcgplayer?: { prices?: Record<string, { market?: number; mid?: number }> };
   cardmarket?: { prices?: { averageSellPrice?: number; trendPrice?: number } };
+};
+
+type PCProduct = {
+  productName?: string;
+  consoleName?: string;
+  consoleUid?: string;
+  price1?: string;
+  price2?: string;
+  price3?: string;
+  imageUri?: string;
+  id?: string;
 };
 
 function bestPrice(card: TCGCard): number {
@@ -71,6 +104,74 @@ async function tcgFetch(q: string, pageSize = 250): Promise<TCGCard[]> {
     const j = await r.json() as { data?: TCGCard[] };
     return j.data ?? [];
   } catch { return []; }
+}
+
+/** Search PriceCharting (no API token needed for search-products endpoint) */
+async function priceChartingLookup(
+  name: string,
+  setNumber: number,
+  setId?: string
+): Promise<{ priceGBP: number; imageUrl: string | null } | null> {
+  const pcKeyword = setId ? (JP_SET_TO_PC[setId.toLowerCase()] ?? "") : "";
+
+  // Build queries from most to least specific
+  const queries: string[] = [];
+  if (pcKeyword) queries.push(`${name} ${setNumber} ${pcKeyword} japanese`);
+  queries.push(`${name} ${setNumber} japanese`);
+  queries.push(`${name} #${setNumber} japanese`);
+
+  // Deduplicate
+  const unique = [...new Set(queries)];
+
+  for (const q of unique) {
+    try {
+      const url = `https://www.pricecharting.com/search-products?q=${encodeURIComponent(q)}&type=prices`;
+      const r = await fetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" },
+        signal: AbortSignal.timeout(7000),
+      });
+      if (!r.ok) continue;
+
+      const data = await r.json() as { products?: PCProduct[] };
+      const products = data.products ?? [];
+      if (!products.length) continue;
+
+      const numStr = `#${setNumber}`;
+
+      // Prefer Japanese set match with exact card number
+      const japanese = products.filter(
+        (p) =>
+          p.productName?.toLowerCase().includes(name.toLowerCase()) &&
+          p.productName?.includes(numStr) &&
+          p.consoleName?.toLowerCase().includes("japanese")
+      );
+      // Fallback: any match with exact card number
+      const any = products.filter(
+        (p) =>
+          p.productName?.toLowerCase().includes(name.toLowerCase()) &&
+          p.productName?.includes(numStr)
+      );
+
+      const match = japanese[0] ?? any[0];
+      if (!match) continue;
+
+      // price3 = ungraded/market price, price1 = lowest sold
+      const raw = match.price3 ?? match.price1 ?? "";
+      const priceUSD = parseFloat(raw.replace(/[^0-9.]/g, "")) || 0;
+      const priceGBP = priceUSD > 0 ? +(priceUSD * USD_TO_GBP).toFixed(2) : 0;
+
+      // Exclude the PriceCharting placeholder image
+      const imgRaw = match.imageUri ?? null;
+      const imageUrl =
+        imgRaw && !imgRaw.includes("no-image-available") ? imgRaw : null;
+
+      return { priceGBP, imageUrl };
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
 }
 
 async function lookupCard(
@@ -159,7 +260,17 @@ async function lookupCard(
     };
   }
 
-  // ── Phase 4: name-only fallback — price estimate, NO image (wrong art) ────────
+  // ── Phase 4: PriceCharting — works for Japanese sets not in PokéTCG ──────────
+  const pc = await priceChartingLookup(name, setNumber, setId);
+  if (pc && (pc.priceGBP > 0 || pc.imageUrl)) {
+    return {
+      priceGBP: pc.priceGBP,
+      imageUrl: pc.imageUrl,
+      priceNote: "Price & image from PriceCharting.com",
+    };
+  }
+
+  // ── Phase 5: name-only fallback — price estimate, NO image (wrong art) ────────
   if (firstName.length > 2) {
     const byName = await tcgFetch(`name:"${firstName}"`, 80);
     const matched = byName
@@ -170,9 +281,9 @@ async function lookupCard(
       )[0];
     if (matched) {
       const note = jpSet
-        ? "Japanese card — price estimate from English equivalent (image unavailable)"
+        ? "Japanese card — price estimate from English equivalent"
         : "Approximate price — exact card not found";
-      // Return price but NO image — Phase 4 image would show wrong card art
+      // Return price but NO image — this phase would show wrong card art
       return { priceGBP: bestPrice(matched), imageUrl: null, priceNote: note };
     }
   }

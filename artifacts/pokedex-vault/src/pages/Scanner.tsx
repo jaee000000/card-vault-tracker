@@ -46,6 +46,26 @@ function captureFrame(video: HTMLVideoElement): string {
   return canvas.toDataURL("image/jpeg", 0.82);
 }
 
+/** Crop the card area (centre 72% width, card aspect ratio) and resize to a compact thumbnail */
+function cropCardThumbnail(dataUrl: string): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const w = img.width, h = img.height;
+      const cropW = Math.floor(w * 0.72);
+      const cropH = Math.floor(cropW * 3.5 / 2.5);
+      const cropX = Math.floor((w - cropW) / 2);
+      const cropY = Math.max(0, Math.floor((h - cropH) / 2));
+      const OUT_W = 260, OUT_H = Math.floor(260 * 3.5 / 2.5);
+      const canvas = document.createElement("canvas");
+      canvas.width = OUT_W; canvas.height = OUT_H;
+      canvas.getContext("2d")!.drawImage(img, cropX, cropY, cropW, Math.min(cropH, h - cropY), 0, 0, OUT_W, OUT_H);
+      resolve(canvas.toDataURL("image/jpeg", 0.82));
+    };
+    img.src = dataUrl;
+  });
+}
+
 /** Crop the bottom 35% of the frame (where set number lives) and upscale 2× for legibility */
 function captureBottomCrop(video: HTMLVideoElement): string {
   const vw = video.videoWidth, vh = video.videoHeight;
@@ -88,6 +108,7 @@ export default function Scanner() {
   const [newBinderName, setNewBinderName] = useState("");
   const [newBinderCode, setNewBinderCode] = useState("");
   const [showNewBinder, setShowNewBinder] = useState(false);
+  const [capturedFrameUrl, setCapturedFrameUrl] = useState<string | null>(null);
 
   const startCamera = useCallback(async () => {
     setCameraError(false);
@@ -134,6 +155,8 @@ export default function Scanner() {
     try {
       const imageBase64 = captureFrame(videoRef.current);
       const bottomCropBase64 = captureBottomCrop(videoRef.current);
+      // Store the full frame — used as fallback image if no database image is found
+      setCapturedFrameUrl(imageBase64);
 
       const res = await fetch("/api/scan/identify", {
         method: "POST",
@@ -202,6 +225,12 @@ export default function Scanner() {
       return;
     }
 
+    // If no database image, crop the camera frame to just the card area as a compact thumbnail
+    let resolvedImageUrl = scanResult.imageUrl ?? undefined;
+    if (!resolvedImageUrl && capturedFrameUrl) {
+      resolvedImageUrl = await cropCardThumbnail(capturedFrameUrl);
+    }
+
     let binderId: number;
 
     if (selectedBinderId === NEW_BINDER_VALUE) {
@@ -240,7 +269,7 @@ export default function Scanner() {
           condition,
           assignedBinderId: binderId,
           currentPriceGBP: scanResult.priceGBP,
-          imageUrl: scanResult.imageUrl ?? undefined,
+          imageUrl: resolvedImageUrl,
         },
       },
       {
@@ -262,6 +291,7 @@ export default function Scanner() {
     setErrorMsg("");
     setSelectedBinderId("");
     setShowNewBinder(false);
+    setCapturedFrameUrl(null);
     startCamera();
   };
 
@@ -318,11 +348,12 @@ export default function Scanner() {
           <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
             {/* Card preview card */}
             <div className="flex gap-4 p-4 bg-primary/10 border border-primary/30 rounded-lg">
-              {scanResult.imageUrl ? (
+              {(scanResult.imageUrl ?? capturedFrameUrl) ? (
                 <img
-                  src={scanResult.imageUrl}
+                  src={scanResult.imageUrl ?? capturedFrameUrl!}
                   alt={scanResult.name}
                   className="w-20 h-28 object-cover rounded shadow-lg shrink-0"
+                  style={scanResult.imageUrl ? {} : { objectPosition: "center 15%" }}
                 />
               ) : (
                 <div className="w-20 h-28 bg-card border border-border rounded flex items-center justify-center shrink-0">
