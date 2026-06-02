@@ -20,40 +20,57 @@ function FullscreenCardViewer({ imageUrl, name, onClose }: { imageUrl: string; n
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[200] flex flex-col items-center justify-center bg-black/96 backdrop-blur-sm"
-      style={{ animation: "fadeIn 0.2s ease-out" }}
+      className="fixed inset-0 flex flex-col items-center justify-center bg-black"
+      style={{
+        zIndex: 99999,
+        pointerEvents: "all",   // override Radix disabling pointer events on body
+        animation: "fsIn 0.22s cubic-bezier(0.22,1,0.36,1)",
+      }}
       onClick={onClose}
     >
-      <style>{`@keyframes fadeIn { from { opacity:0; transform:scale(0.97) } to { opacity:1; transform:scale(1) } }`}</style>
+      <style>{`
+        @keyframes fsIn {
+          from { opacity: 0; transform: scale(0.94) }
+          to   { opacity: 1; transform: scale(1) }
+        }
+      `}</style>
 
-      {/* Close button */}
+      {/* Close button — stopPropagation so backdrop click doesn't also fire */}
       <button
-        onClick={onClose}
-        className="absolute top-4 right-4 z-10 p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-white border border-white/20 transition-colors"
+        onClick={(e) => { e.stopPropagation(); onClose(); }}
+        className="absolute top-5 right-5 p-3 rounded-full bg-white/15 active:bg-white/30 text-white border border-white/25"
+        style={{ pointerEvents: "all", zIndex: 100000 }}
       >
         <X className="w-5 h-5" />
       </button>
 
       {/* Card name */}
-      <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-white/40 mb-4 select-none">{name}</p>
+      <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-white/35 mb-5 select-none">
+        {name}
+      </p>
 
-      {/* Full-size card with holo */}
+      {/* Full-size card with holo — stop propagation so taps on card don't close */}
       <div
         ref={holo.ref}
-        style={{ ...holo.cardStyle, maxHeight: "78vh", aspectRatio: "2.5/3.5", width: "auto" }}
+        style={{
+          ...holo.cardStyle,
+          height: "72vh",
+          aspectRatio: "2.5/3.5",
+          width: "auto",
+          pointerEvents: "all",
+          touchAction: "none",   // prevent browser stealing touch for scroll — enables holo on mobile
+        }}
         {...holo.handlers}
         onClick={(e) => e.stopPropagation()}
-        className="relative cursor-default rounded-xl overflow-hidden shadow-[0_24px_80px_rgba(0,0,0,0.9)]"
+        className="relative cursor-default rounded-2xl overflow-hidden shadow-[0_30px_90px_rgba(0,0,0,0.95)]"
       >
-        <img
-          src={imageUrl}
-          alt={name}
-          className="w-full h-full object-cover"
-        />
+        <img src={imageUrl} alt={name} className="w-full h-full object-cover block" />
         <div style={holo.shimmerStyle} />
       </div>
 
-      <p className="font-mono text-[9px] text-white/25 mt-5 select-none">Tap anywhere to close · drag to tilt</p>
+      <p className="font-mono text-[9px] text-white/20 mt-5 select-none">
+        Tap outside to close · drag card to tilt
+      </p>
     </div>,
     document.body
   );
