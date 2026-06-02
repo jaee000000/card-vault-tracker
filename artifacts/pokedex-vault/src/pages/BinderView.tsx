@@ -176,10 +176,6 @@ export default function BinderView() {
                 {Array.from({ length: 9 }).map((_, i) => {
                   const slotNumber = currentPage * 9 + i + 1;
                   const card = getCardForSlot(slotNumber);
-                  if (slotNumber > binder.setTotal && !card) {
-                    return <div key={i} className="rounded bg-background/10" />;
-                  }
-
                   const isHighlighted = highlightSlot === slotNumber;
 
                   return (
