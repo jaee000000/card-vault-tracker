@@ -92,7 +92,7 @@ router.post("/", async (req, res) => {
     res.status(400).json({ error: parse.error.message });
     return;
   }
-  const { name, setNumber, setTotal, assignedBinderId, condition, currentPriceGBP, imageUrl } = parse.data;
+  const { name, setNumber, setTotal, assignedBinderId, condition, currentPriceGBP, psa10GBP, bgs10GBP, imageUrl } = parse.data;
 
   const [binder] = await db.select().from(bindersTable).where(eq(bindersTable.id, assignedBinderId));
   if (!binder) {
@@ -101,6 +101,11 @@ router.post("/", async (req, res) => {
   }
 
   const priceGBP = currentPriceGBP ?? (await fetchLivePriceGBP(name, setNumber, binder.setCode));
+
+  // If PSA 10 came from PriceCharting during scan, save it immediately.
+  // Estimate BGS 10 at 1.6× PSA 10 — the AI eBay search refines it on next graded-values request.
+  const resolvedPsa10 = psa10GBP ?? null;
+  const resolvedBgs10 = bgs10GBP ?? (resolvedPsa10 ? parseFloat((resolvedPsa10 * 1.6).toFixed(2)) : null);
 
   const [card] = await db
     .insert(cardsTable)
@@ -113,6 +118,9 @@ router.post("/", async (req, res) => {
       currentPriceGBP: String(priceGBP),
       imageUrl: imageUrl ?? null,
       lastPriceRefreshedAt: new Date(),
+      psa10GBP: resolvedPsa10 != null ? String(resolvedPsa10) : null,
+      bgs10GBP: resolvedBgs10 != null ? String(resolvedBgs10) : null,
+      gradedRefreshedAt: resolvedPsa10 != null ? new Date() : null,
     })
     .returning();
 
@@ -348,13 +356,55 @@ async function estimateGradedValues(
   ].filter(Boolean).join(" ");
 
   // --- Phase 0: PriceCharting (price2 = PSA 10, no AI needed) ---
+  // Then do a targeted AI eBay search for BGS 10 specifically.
   try {
     const setCode = binder?.setCode?.toLowerCase();
     const pc = await priceChartingLookup(card.name, card.setNumber, setCode);
     if (pc?.psa10GBP && pc.psa10GBP > 0) {
       const psa10 = parseFloat(Math.max(pc.psa10GBP, raw).toFixed(2));
-      const bgs10 = parseFloat((psa10 * 1.6).toFixed(2));
-      console.log(`[graded] pricecharting: "${card.name}" PSA10=£${psa10} BGS10=£${bgs10}`);
+      let bgs10 = parseFloat((psa10 * 1.6).toFixed(2)); // default until eBay search resolves
+
+      // AI eBay search for BGS 10 specifically (PriceCharting doesn't track BGS grades)
+      try {
+        const bgsResp = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          signal: AbortSignal.timeout(22000),
+          body: JSON.stringify({
+            model: "gpt-4o-search-preview",
+            web_search_options: { search_context_size: "low" },
+            messages: [
+              {
+                role: "user",
+                content:
+                  `Search eBay UK and eBay.com completed/sold listings for a BGS Pristine 10 or BGS Black Label graded Pokémon card: ${cardDesc}. ` +
+                  `Also check mavin.io and 130point for BGS 10 sold prices. ` +
+                  `The PSA 10 price is £${psa10} GBP. Convert any USD prices to GBP (1 USD = 0.79 GBP). ` +
+                  `Reply ONLY with JSON, no extra text: {"bgs10_gbp": <number or null if not found>}`,
+              },
+            ],
+          }),
+        });
+        if (bgsResp.ok) {
+          const bgsData = await bgsResp.json() as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } };
+          if (!bgsData.error) {
+            const content = bgsData.choices?.[0]?.message?.content ?? "";
+            const parsed = extractJsonFromText(content) as { bgs10_gbp?: unknown };
+            const bgs10Raw = typeof parsed.bgs10_gbp === "number" && parsed.bgs10_gbp > 0 ? parsed.bgs10_gbp : null;
+            if (bgs10Raw) {
+              bgs10 = parseFloat(Math.max(bgs10Raw, psa10).toFixed(2));
+              console.log(`[graded] ebay-bgs: "${card.name}" BGS10=£${bgs10}`);
+            }
+          }
+        }
+      } catch (bgsErr) {
+        console.warn("[graded] BGS eBay search failed, using PSA10×1.6 estimate:", (bgsErr as Error).message);
+      }
+
+      console.log(`[graded] pricecharting+ebay: "${card.name}" PSA10=£${psa10} BGS10=£${bgs10}`);
       return { psa10, bgs10, confidence: "high", source: "pricecharting" };
     }
   } catch (err) {

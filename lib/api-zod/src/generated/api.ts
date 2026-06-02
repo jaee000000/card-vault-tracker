@@ -131,6 +131,8 @@ export const CreateCardBody = zod.object({
   "setTotal": zod.number(),
   "condition": zod.string().optional(),
   "currentPriceGBP": zod.number().optional(),
+  "psa10GBP": zod.number().optional(),
+  "bgs10GBP": zod.number().optional(),
   "imageUrl": zod.string().optional(),
   "assignedBinderId": zod.number()
 })

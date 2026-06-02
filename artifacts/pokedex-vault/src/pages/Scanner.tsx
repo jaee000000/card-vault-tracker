@@ -42,6 +42,7 @@ interface ScanResult {
   rarity?: string;
   confidence: string;
   priceGBP: number;
+  psa10GBP?: number | null;
   imageUrl: string | null;
   priceNote?: string | null;
 }
@@ -355,6 +356,7 @@ export default function Scanner() {
           condition,
           assignedBinderId: binderId,
           currentPriceGBP: scanResult.priceGBP,
+          ...(scanResult.psa10GBP != null ? { psa10GBP: scanResult.psa10GBP } : {}),
           imageUrl: resolvedImageUrl,
         },
       },

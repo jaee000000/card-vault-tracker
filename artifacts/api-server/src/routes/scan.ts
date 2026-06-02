@@ -309,7 +309,7 @@ async function lookupCard(
   setNumber: number,
   setTotal: number,
   setId?: string
-): Promise<{ priceGBP: number; imageUrl: string | null; priceNote: string | null }> {
+): Promise<{ priceGBP: number; psa10GBP: number | null; imageUrl: string | null; priceNote: string | null }> {
   const numStr = String(setNumber).padStart(3, "0");
   const isSecret = setNumber > setTotal;
   const jpSet = setId ? isJapaneseSet(setId) : false;
@@ -333,6 +333,7 @@ async function lookupCard(
     if (pc && (pc.priceGBP > 0 || pc.imageUrl)) {
       return {
         priceGBP: pc.priceGBP,
+        psa10GBP: pc.psa10GBP,
         imageUrl: pc.imageUrl,
         priceNote: "Price & image from PriceCharting.com",
       };
@@ -346,6 +347,7 @@ async function lookupCard(
     if (match) {
       return {
         priceGBP: bestPrice(match),
+        psa10GBP: null,
         imageUrl: match.images?.large ?? match.images?.small ?? null,
         priceNote: jpSet ? jpNote : null,
       };
@@ -372,6 +374,7 @@ async function lookupCard(
       )[0];
       return {
         priceGBP: bestPrice(best),
+        psa10GBP: null,
         imageUrl: best.images?.large ?? best.images?.small ?? null,
         priceNote: jpSet ? jpNote : null,
       };
@@ -388,6 +391,7 @@ async function lookupCard(
   if (namedMatch) {
     return {
       priceGBP: bestPrice(namedMatch),
+      psa10GBP: null,
       imageUrl: namedMatch.images?.large ?? namedMatch.images?.small ?? null,
       priceNote: jpSet ? jpNote : null,
     };
@@ -402,6 +406,7 @@ async function lookupCard(
   if (namedClose) {
     return {
       priceGBP: bestPrice(namedClose),
+      psa10GBP: null,
       imageUrl: namedClose.images?.large ?? namedClose.images?.small ?? null,
       priceNote: jpSet ? jpNote : null,
     };
@@ -412,6 +417,7 @@ async function lookupCard(
   if (pc && (pc.priceGBP > 0 || pc.imageUrl)) {
     return {
       priceGBP: pc.priceGBP,
+      psa10GBP: pc.psa10GBP,
       imageUrl: pc.imageUrl,
       priceNote: "Price & image from PriceCharting.com",
     };
@@ -430,12 +436,11 @@ async function lookupCard(
       const note = jpSet
         ? "Japanese card — price estimate from English equivalent"
         : "Approximate price — exact card not found";
-      // Return price but NO image — this phase would show wrong card art
-      return { priceGBP: bestPrice(matched), imageUrl: null, priceNote: note };
+      return { priceGBP: bestPrice(matched), psa10GBP: null, imageUrl: null, priceNote: note };
     }
   }
 
-  return { priceGBP: 0, imageUrl: null, priceNote: jpSet ? "Japanese card — not in price database" : null };
+  return { priceGBP: 0, psa10GBP: null, imageUrl: null, priceNote: jpSet ? "Japanese card — not in price database" : null };
 }
 
 /** Resolve a human-friendly set name + code + pocket count for auto-creating a binder. */
@@ -609,9 +614,9 @@ If the card cannot be identified at all:
       return;
     }
 
-    const { priceGBP, imageUrl, priceNote } = await lookupCard(name, setNumber, setTotal, setId);
+    const { priceGBP, psa10GBP, imageUrl, priceNote } = await lookupCard(name, setNumber, setTotal, setId);
 
-    res.json({ name, setNumber, setTotal, setId, rarity, confidence, priceGBP, imageUrl, priceNote });
+    res.json({ name, setNumber, setTotal, setId, rarity, confidence, priceGBP, psa10GBP, imageUrl, priceNote });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("429") || msg.toLowerCase().includes("quota")) {
