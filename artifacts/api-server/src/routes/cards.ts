@@ -2,7 +2,7 @@ import { Router } from "express";
 import OpenAI from "openai";
 import { db, cardsTable, bindersTable } from "@workspace/db";
 import { eq, or, isNull } from "drizzle-orm";
-import { findCardImage, priceChartingLookup } from "./scan";
+import { findCardImage, priceChartingLookup, webSearchRawPriceGBP } from "./scan";
 import {
   CreateCardBody,
   UpdateCardBody,
@@ -18,7 +18,7 @@ const router = Router();
 const USD_TO_GBP = 0.79;
 const EUR_TO_GBP = 0.85;
 
-export async function fetchLivePriceGBP(name: string, setNumber: number, setCode?: string): Promise<number> {
+export async function fetchLivePriceGBP(name: string, setNumber: number, setCode?: string, setTotal = 0): Promise<number> {
   const sc = setCode?.toLowerCase();
   try {
     const numStr = String(setNumber);
@@ -83,6 +83,15 @@ export async function fetchLivePriceGBP(name: string, setNumber: number, setCode
     console.warn("PriceCharting price fetch failed:", err);
   }
 
+  // Last resort — live web search (reaches the open web even from prod, where
+  // PriceCharting is blocked). Covers Japanese-only cards not in PokéTCG.
+  try {
+    const wp = await webSearchRawPriceGBP(name, setNumber, setTotal, sc);
+    if (wp > 0) return wp;
+  } catch (err) {
+    console.warn("Web-search price fetch failed:", err);
+  }
+
   return 0;
 }
 
@@ -127,7 +136,7 @@ router.post("/", async (req, res) => {
     return;
   }
 
-  const priceGBP = currentPriceGBP ?? (await fetchLivePriceGBP(name, setNumber, binder.setCode));
+  const priceGBP = currentPriceGBP ?? (await fetchLivePriceGBP(name, setNumber, binder.setCode, setTotal));
 
   // Resolve proper card art for EVERY scanned card. The frontend sends the user's
   // own scan-photo thumbnail (a data: URI) whenever the scan couldn't find real art.
@@ -183,7 +192,7 @@ router.post("/resync-all", async (_req, res) => {
   for (const card of cards) {
     try {
       const setCode = binderMap.get(card.assignedBinderId) ?? undefined;
-      const newPrice = await fetchLivePriceGBP(card.name, card.setNumber, setCode);
+      const newPrice = await fetchLivePriceGBP(card.name, card.setNumber, setCode, card.setTotal);
       await db
         .update(cardsTable)
         .set({ currentPriceGBP: String(newPrice), lastPriceRefreshedAt: new Date() })
@@ -611,7 +620,7 @@ router.post("/:id/refresh-price", async (req, res) => {
     return;
   }
   const [binder] = await db.select().from(bindersTable).where(eq(bindersTable.id, card.assignedBinderId));
-  const newPrice = await fetchLivePriceGBP(card.name, card.setNumber, binder?.setCode);
+  const newPrice = await fetchLivePriceGBP(card.name, card.setNumber, binder?.setCode, card.setTotal);
   const [updated] = await db
     .update(cardsTable)
     .set({ currentPriceGBP: String(newPrice), lastPriceRefreshedAt: new Date() })

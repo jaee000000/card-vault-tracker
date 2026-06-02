@@ -44,6 +44,11 @@ not the lookup. Verify a card's real price by querying PriceCharting directly an
 `POST /api/cards/backfill-images` (cards.ts) fills cards with null/empty image_url via `findCardImage`; only overwrites price when current <=0. Idempotent (skips rows that already have an image). Guarded in production by `x-admin-token` header === `ADMIN_TOKEN` env; open in dev for local seeding.
 **Note:** seed/demo cards use fictional set names (Chaos Rising/CHR, Abyss Eye/ABY, M2a Mega Dream ex/M2A) with numbers that don't map to real cards, so matched art is best-effort.
 
+## Production pricing workaround: live web search (gpt-4o-search-preview)
+Because PriceCharting is blocked from prod (see below) and Japanese-only cards (e.g. Cynthia's Spiritomb M2A) aren't in PokéTCG, they showed "Price N/A" in production. Fix: `webSearchRawPriceGBP(name, setNumber, setTotal, setId)` in scan.ts uses OpenAI model `gpt-4o-search-preview` with `web_search_options` (raw fetch to /v1/chat/completions, NOT the SDK) to find the RAW ungraded GBP price from eBay sold/PriceCharting/mavin/130point. This model reaches the open web FROM PROD (OpenAI egress is allowed; it's the same model used for graded-values eBay search).
+Wired as last-resort only (so it never slows cards already priced by PokéTCG/PriceCharting): lookupCard Phase 5 when English-twin price is 0, a new Phase 6 final fallback, and fetchLivePriceGBP (cards.ts) before returning 0. Note shown: "Price from live web search (sold listings)". 22s timeout; returns 0 on any failure.
+**Why this and not a CORS/relay proxy:** free relays (allorigins/corsproxy/codetabs) ALSO get an empty body from PriceCharting — it blocks cloud/datacenter IPs generally, so no cloud-hosted relay works. The dev sandbox IP is allowed, which is why dev works.
+
 ## PriceCharting is UNREACHABLE from the production deployment (dev works)
 In the published/deployed environment, requests to pricecharting.com return an empty body (blocked), so every `priceChartingLookup` silently fails (caught) and falls through to the PokéTCG phases. In dev it works fine. This means Japanese cards scanned in production CANNOT use Phase 0/4 (PriceCharting) — they fall to Phase 5.
 **Why:** user reported "Price N/A" only on the published app for M4 Mega Greninja ex while dev priced it. Confirmed prod PriceCharting fetch returns 0 bytes.

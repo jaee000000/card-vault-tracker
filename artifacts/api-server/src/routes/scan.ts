@@ -306,6 +306,78 @@ function toPrice(p: PCProduct): { priceGBP: number; psa10GBP: number | null; ima
   return { priceGBP, psa10GBP, imageUrl };
 }
 
+/**
+ * Last-resort price: a live web search for the RAW (ungraded) market price.
+ * Uses gpt-4o-search-preview, which reaches the open web even from the
+ * production deployment — unlike PriceCharting, whose plain search endpoint
+ * returns an empty body to our prod egress IP. Used for Japanese-only cards
+ * that aren't in PokéTCG and can't reach PriceCharting in production.
+ * Returns 0 when nothing reliable is found.
+ */
+export async function webSearchRawPriceGBP(
+  name: string,
+  setNumber: number,
+  setTotal: number,
+  setId?: string
+): Promise<number> {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return 0;
+  const setName = setId ? JP_SET_TO_PC[setId.toLowerCase()] : undefined;
+  const desc =
+    `${name} ${setTotal > 0 ? `${setNumber}/${setTotal}` : `#${setNumber}`}` +
+    (setId ? ` (set code ${setId.toUpperCase()}${setName ? `, "${setName}"` : ""})` : "");
+  try {
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(20000),
+      body: JSON.stringify({
+        model: "gpt-4o-search-preview",
+        web_search_options: { search_context_size: "low" },
+        messages: [
+          {
+            role: "user",
+            content:
+              `Find the current RAW (ungraded, Near Mint) market price in GBP for this Japanese-language Pokémon card: ${desc}. ` +
+              `Search eBay UK and eBay.com SOLD/completed listings, PriceCharting, mavin.io, 130point, and TCG marketplaces for recent actual sold prices of the UNGRADED card (NOT graded / PSA / BGS / CGC). ` +
+              `Convert USD to GBP (1 USD = ${USD_TO_GBP} GBP) and JPY to GBP (1 JPY = 0.0052 GBP). ` +
+              `Use a typical recent sold price, not the highest outlier. ` +
+              `Reply with ONLY a JSON object and nothing else: {"raw_gbp": <number, or null if you cannot find a real sold price>}`,
+          },
+        ],
+      }),
+    });
+    if (!resp.ok) return 0;
+    const data = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const content = data.choices?.[0]?.message?.content ?? "";
+    // Robust extraction: pull the raw_gbp value directly (handles bare numbers,
+    // quoted numbers, currency symbols, prose, and ```json fences alike).
+    let v = 0;
+    const direct = content.match(/"?raw_gbp"?\s*[:=]\s*"?\s*£?\s*([\d]+(?:\.[\d]+)?)/i);
+    if (direct) {
+      v = parseFloat(direct[1]);
+    } else {
+      // Fallback: try parsing the last JSON-looking object in the text.
+      const objs = content.match(/\{[^{}]*\}/g);
+      if (objs) {
+        for (let i = objs.length - 1; i >= 0; i--) {
+          try {
+            const p = JSON.parse(objs[i]) as { raw_gbp?: unknown };
+            const n = typeof p.raw_gbp === "string" ? parseFloat(p.raw_gbp) : p.raw_gbp;
+            if (typeof n === "number" && isFinite(n) && n > 0) { v = n; break; }
+          } catch { /* keep scanning */ }
+        }
+      }
+    }
+    if (!(v > 0) || !isFinite(v)) return 0;
+    console.log(`[price] web-search: "${name}" £${v.toFixed(2)}`);
+    return +v.toFixed(2);
+  } catch (err) {
+    console.warn("[price] web-search failed:", (err as Error).message);
+    return 0;
+  }
+}
+
 async function lookupCard(
   name: string,
   setNumber: number,
@@ -459,16 +531,31 @@ async function lookupCard(
     const imageUrl = imgCard?.images?.large ?? imgCard?.images?.small ?? null;
 
     if (priceCard || imageUrl) {
-      const note = jpSet
+      let priceGBP = priceCard ? bestPrice(priceCard) : 0;
+      let note = jpSet
         ? "Japanese card — price estimate from English equivalent"
         : "Approximate price — exact card not found";
-      return {
-        priceGBP: priceCard ? bestPrice(priceCard) : 0,
-        psa10GBP: null,
-        imageUrl,
-        priceNote: note,
-      };
+      // No usable price from the English twin — get a real one via live web search.
+      if (priceGBP === 0) {
+        const wp = await webSearchRawPriceGBP(name, setNumber, setTotal, setId);
+        if (wp > 0) {
+          priceGBP = wp;
+          note = "Price from live web search (sold listings)";
+        }
+      }
+      return { priceGBP, psa10GBP: null, imageUrl, priceNote: note };
     }
+  }
+
+  // ── Phase 6: nothing in any database — live web search for the raw price ─────
+  const webPrice = await webSearchRawPriceGBP(name, setNumber, setTotal, setId);
+  if (webPrice > 0) {
+    return {
+      priceGBP: webPrice,
+      psa10GBP: null,
+      imageUrl: null,
+      priceNote: "Price from live web search (sold listings)",
+    };
   }
 
   return { priceGBP: 0, psa10GBP: null, imageUrl: null, priceNote: jpSet ? "Japanese card — not in price database" : null };
