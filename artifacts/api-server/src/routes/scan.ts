@@ -535,6 +535,30 @@ async function lookupCard(
 
   const jpNote = "Japanese card — price shown is for nearest English equivalent";
 
+  // When an English-equivalent phase resolves an image but no price (the twin
+  // card has price 0 in PokéTCG), don't short-circuit to "Price N/A" — fetch the
+  // real raw price via live web search and keep the image we already found.
+  const withLivePrice = async (
+    priceGBP: number,
+    imageUrl: string | null,
+  ): Promise<{ priceGBP: number; psa10GBP: number | null; imageUrl: string | null; priceNote: string | null }> => {
+    if (priceGBP > 0) {
+      return { priceGBP, psa10GBP: null, imageUrl, priceNote: jpSet ? jpNote : null };
+    }
+    const wp = await webSearchRawPriceGBP(name, setNumber, setTotal, setId);
+    return {
+      priceGBP: wp,
+      psa10GBP: null,
+      imageUrl,
+      priceNote:
+        wp > 0
+          ? "Price from live web search (sold listings)"
+          : jpSet
+            ? "Japanese card — not in price database"
+            : null,
+    };
+  };
+
   // ── Phase 0: Japanese cards — PriceCharting has the EXACT card + real image ──
   // Run this FIRST for Japanese sets, otherwise the English-equivalent phases
   // below return a wrong-art card (e.g. an English Froslass AR for メガユキメノコex).
@@ -555,12 +579,10 @@ async function lookupCard(
     const results = await tcgFetch(`set.id:${enSetId} number:${numStr}`, 10);
     const match = results.find(c => namesMatch(name, c.name ?? ""));
     if (match) {
-      return {
-        priceGBP: bestPrice(match),
-        psa10GBP: null,
-        imageUrl: match.images?.large ?? match.images?.small ?? null,
-        priceNote: jpSet ? jpNote : null,
-      };
+      return await withLivePrice(
+        bestPrice(match),
+        match.images?.large ?? match.images?.small ?? null,
+      );
     }
     // Card found but different Pokémon (e.g. Bramblin at sv2-198) — skip, don't use wrong image
   }
@@ -582,12 +604,10 @@ async function lookupCard(
         Math.abs(parseInt(a.number ?? "0") - setNumber) -
         Math.abs(parseInt(b.number ?? "0") - setNumber)
       )[0];
-      return {
-        priceGBP: bestPrice(best),
-        psa10GBP: null,
-        imageUrl: best.images?.large ?? best.images?.small ?? null,
-        priceNote: jpSet ? jpNote : null,
-      };
+      return await withLivePrice(
+        bestPrice(best),
+        best.images?.large ?? best.images?.small ?? null,
+      );
     }
   }
 
@@ -599,12 +619,10 @@ async function lookupCard(
     c => namesMatch(name, c.name ?? "") && c.set?.printedTotal === setTotal
   );
   if (namedMatch) {
-    return {
-      priceGBP: bestPrice(namedMatch),
-      psa10GBP: null,
-      imageUrl: namedMatch.images?.large ?? namedMatch.images?.small ?? null,
-      priceNote: jpSet ? jpNote : null,
-    };
+    return await withLivePrice(
+      bestPrice(namedMatch),
+      namedMatch.images?.large ?? namedMatch.images?.small ?? null,
+    );
   }
   // Closest printedTotal but still must match name
   const namedClose = withNum
@@ -614,12 +632,10 @@ async function lookupCard(
       Math.abs((b.set?.printedTotal ?? 9999) - setTotal)
     )[0];
   if (namedClose) {
-    return {
-      priceGBP: bestPrice(namedClose),
-      psa10GBP: null,
-      imageUrl: namedClose.images?.large ?? namedClose.images?.small ?? null,
-      priceNote: jpSet ? jpNote : null,
-    };
+    return await withLivePrice(
+      bestPrice(namedClose),
+      namedClose.images?.large ?? namedClose.images?.small ?? null,
+    );
   }
 
   // ── Phase 4: PriceCharting — works for Japanese sets not in PokéTCG ──────────
