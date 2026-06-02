@@ -595,6 +595,7 @@ Extract these 5 fields:
    - Use the official English species name, NEVER romaji: "カイリュー"→"Dragonite" (NOT "Kairyu"), "ゲッコウガ"→"Greninja" (NOT "Gekkouga"), "ガブリアス"→"Garchomp", "ゲンガー"→"Gengar"
    - More examples: "ドンメル"→"Numel", "リザードン"→"Charizard", "ユキメノコ"→"Froslass", "ユキノオー"→"Abomasnow"
    - Keep the "メガ"/"Mega" prefix and the "ex"/"GX"/"V"/"VMAX"/"VSTAR" suffix EXACTLY as printed: "メガユキメノコex"→"Mega Froslass ex", "メガカイリューex"→"Mega Dragonite ex", "リザードンex"→"Charizard ex"
+   - TRAINER'S POKÉMON: if a Trainer name in the possessive form (ending in "の" = "'s") is printed BEFORE the Pokémon name, you MUST include it as "{Trainer}'s {Pokémon}". This is critical — omitting it identifies a completely different card. Translate the trainer name to English: "シロナ"→"Cynthia", "カスミ"→"Misty", "サカキ"→"Giovanni", "ナンジャモ"→"Iono", "マリィ"→"Marnie", "リーリエ"→"Lillie", "ハウ"→"Hau", "グズマ"→"Guzma", "アカギ"→"Cyrus", "N"→"N". Examples: "シロナのミカルゲ"→"Cynthia's Spiritomb", "カスミのコダック"→"Misty's Psyduck", "サカキのニドキング"→"Giovanni's Nidoking".
 2. setNumber — integer BEFORE the slash (e.g. 224 from "224/193")
 3. setTotal — integer AFTER the slash (e.g. 193 from "224/193")
 4. setId — the small set code near those numbers. Read each character individually.

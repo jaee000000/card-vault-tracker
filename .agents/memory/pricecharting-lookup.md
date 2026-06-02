@@ -55,6 +55,12 @@ For Japanese cards that fall to Phase 5, PRICE and IMAGE come from DIFFERENT car
 - IMAGE: ONLY an EXACT normalized-name match (e.g. JP "Mega Greninja ex" == EN "Mega Greninja ex" Chaos Rising), tie-broken by matching card number. Modern Mega/ex cards share identical artwork worldwide, so the EN twin's image is correct art. A loose match (base form) would be wrong art → leave image null.
 **Why:** PokéTCG HAS "Mega Greninja ex" (Chaos Rising, set me4) at £0 with the correct scrydex image (me4-22); the price had to come from English "Greninja ex" (~£1.30) while the image came from the £0 exact twin.
 
+## Trainer's Pokémon cards — the possessive prefix MUST be captured
+JP "Trainer's Pokémon" cards print a trainer name in possessive form (ending in の = "'s") BEFORE the Pokémon, e.g. シロナのミカルゲ = "Cynthia's Spiritomb" (シロナ=Cynthia, ミカルゲ=Spiritomb). The AI drops the prefix and returns just "Spiritomb", which then matches a DIFFERENT real card on PriceCharting → wrong art + wrong price. Real case: シロナのミカルゲ m2a 208/193 was returned as plain "Spiritomb" sv2a 203/165 (a real Clay Burst card).
+**Fix:** prompt now lists trainer translations (シロナ→Cynthia, カスミ→Misty, サカキ→Giovanni, ナンジャモ→Iono, マリィ→Marnie, リーリエ→Lillie, ハウ→Hau, グズマ→Guzma, アカギ→Cyrus, N→N) and requires "{Trainer}'s {Pokémon}".
+**Why it's enough:** PriceCharting lists these as e.g. "Cynthia's Spiritomb #208" (Mega Dream ex). The name filter (`productName.includes(name)`) then excludes plain "Spiritomb"; even with a misread number/set the name-only fallback picks the closest-numbered "Cynthia's Spiritomb". m2a = "mega dream" in JP_SET_TO_PC.
+**Caveat:** for these JP-only cards, baseName/firstName becomes "Cynthias" so the English-equivalent (PokéTCG) phases can't match — fine in dev (PriceCharting works) but in prod (PriceCharting blocked) they get no art, just the scan photo (never wrong art).
+
 ## AI misreads Japanese "m4" as English "xy4"
 GPT-4o reads the Japanese M-series set code "m4" as "xy4". Fixed two ways: prompt explicitly says m-series start with 'm' not 'xy' ("m4" ≠ "xy4"), AND a code-level SET_ID_FIXES map rewrites xy4→m4 ONLY when setTotal ≠ 119 (real XY4 Phantom Forces size). 
 **Why:** mismatch between reported setTotal and the real English set size is the only safe signal it's actually the JP set. Do NOT add speculative xy1/xy2/xy3 entries — their totals were guessed wrong and would misclassify real English XY cards.
