@@ -23,6 +23,17 @@ import { useLocation } from "wouter";
 const CONDITIONS = ["Raw", "PSA 10", "PSA 9", "BGS 10", "CGC 10", "Lightly Played", "Heavily Played"];
 const NEW_BINDER_VALUE = "__new__";
 
+// The AI runs a single identify call, but we narrate it as three visible passes
+// so the user sees what the scanner is "looking at": the name, then the set/number
+// in the bottom-left, then the full artwork.
+const SCAN_PHASES = [
+  { label: "Reading name", sub: "Top of card" },
+  { label: "Reading set & number", sub: "Bottom-left" },
+  { label: "Matching artwork", sub: "Full card" },
+];
+const PHASE_MS = [1100, 1100]; // durations for phase 0 and 1; phase 2 holds until done
+const MIN_SCAN_MS = 2900; // guarantee all three passes are visible
+
 interface ScanResult {
   name: string;
   setNumber: number;
@@ -104,10 +115,13 @@ export default function Scanner() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  // Bumped each scan so a slow set-info prefill from an old scan can't clobber a newer one
+  const prefillTokenRef = useRef(0);
   const [cameraError, setCameraError] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
 
   const [status, setStatus] = useState<"idle" | "scanning" | "success" | "error" | "manual">("idle");
+  const [scanPhase, setScanPhase] = useState(0);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [scanCount, setScanCount] = useState(0);
@@ -158,11 +172,52 @@ export default function Scanner() {
     return () => stopCamera();
   }, []);
 
+  // Drive the three visible scan passes while the AI identifies the card.
+  useEffect(() => {
+    if (status !== "scanning") {
+      setScanPhase(0);
+      return;
+    }
+    setScanPhase(0);
+    const t1 = setTimeout(() => setScanPhase(1), PHASE_MS[0]);
+    const t2 = setTimeout(() => setScanPhase(2), PHASE_MS[0] + PHASE_MS[1]);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [status]);
+
+  // Look up the set and pre-fill the new-binder form so a matching binder can be
+  // created automatically (with the correct number of pockets) on save.
+  const prefillNewBinder = async (setId: string | undefined, setTotal: number, token: number) => {
+    const fallbackName = setId ? `${setId.toUpperCase()} Set` : "New Set";
+    const fallbackCode = (setId || "SET").toUpperCase();
+    let name = fallbackName;
+    let code = fallbackCode;
+    try {
+      const res = await fetch(
+        `/api/scan/set-info?setId=${encodeURIComponent(setId ?? "")}&setTotal=${setTotal}`
+      );
+      if (res.ok) {
+        const info = (await res.json()) as { name?: string; setCode?: string };
+        name = info.name || fallbackName;
+        code = (info.setCode || setId || "SET").toUpperCase();
+      }
+    } catch {
+      /* keep fallbacks */
+    }
+    // Ignore if a newer scan started while this lookup was in flight
+    if (prefillTokenRef.current !== token) return;
+    setNewBinderName(name);
+    setNewBinderCode(code);
+  };
+
   const handleScan = async () => {
     if (!videoRef.current || !cameraReady) return;
     setStatus("scanning");
     setErrorMsg("");
     setScanCount(n => n + 1);
+    const startedAt = Date.now();
 
     try {
       const imageBase64 = captureFrame(videoRef.current);
@@ -192,15 +247,32 @@ export default function Scanner() {
         return;
       }
 
+      // Keep the scanning animation up long enough to show all three passes
+      const elapsed = Date.now() - startedAt;
+      if (elapsed < MIN_SCAN_MS) {
+        await new Promise(r => setTimeout(r, MIN_SCAN_MS - elapsed));
+      }
+
       setScanResult(data);
       setCardName(data.name);
       setStatus("success");
       stopCamera();
 
-      // Auto-select binder if set total matches an existing one
-      if (binders?.length) {
-        const match = binders.find(b => b.setTotal === data.setTotal);
-        if (match) setSelectedBinderId(String(match.id));
+      // Match an existing binder ONLY by set code — matching on set total alone
+      // would file the card into an unrelated set that shares the same total.
+      const match = data.setId
+        ? binders?.find(b => b.setCode?.toLowerCase() === data.setId!.toLowerCase())
+        : undefined;
+
+      if (match) {
+        setSelectedBinderId(String(match.id));
+        setShowNewBinder(false);
+      } else {
+        // No binder for this set yet → auto-create one with the right pockets.
+        setSelectedBinderId(NEW_BINDER_VALUE);
+        setShowNewBinder(true);
+        const token = ++prefillTokenRef.current;
+        void prefillNewBinder(data.setId, data.setTotal, token);
       }
 
       toast({
@@ -455,11 +527,14 @@ export default function Scanner() {
                 </Select>
               </div>
 
-              {/* Inline new-binder form */}
+              {/* Inline new-binder form — auto-filled from the scanned set */}
               {showNewBinder && (
                 <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-3">
                   <p className="font-mono text-[10px] uppercase text-primary tracking-widest">
-                    New Binder — {scanResult.setTotal} cards total (auto-detected)
+                    New Binder — {scanResult.setTotal} pockets (auto-detected)
+                  </p>
+                  <p className="font-mono text-[9px] text-muted-foreground -mt-1.5">
+                    No binder for this set yet — we looked it up for you. Edit if needed, then add to vault.
                   </p>
                   <div className="space-y-1.5">
                     <Label className="font-mono uppercase text-[10px] text-muted-foreground">Binder Name</Label>
@@ -553,33 +628,57 @@ export default function Scanner() {
                           {/* Tinted analysis wash */}
                           <div className="absolute inset-0 bg-primary/10" />
 
-                          {/* Scanline grid */}
+                          {/* Scanline grid — densest during the artwork pass */}
                           <div
-                            className="absolute inset-0 animate-[grid-pulse_1.6s_ease-in-out_infinite]"
+                            className="absolute inset-0 animate-[grid-pulse_1.6s_ease-in-out_infinite] transition-opacity duration-500"
                             style={{
+                              opacity: scanPhase === 2 ? 1 : 0.4,
                               backgroundImage:
                                 "repeating-linear-gradient(0deg, rgba(0,255,255,0.25) 0px, rgba(0,255,255,0.25) 1px, transparent 1px, transparent 14px), repeating-linear-gradient(90deg, rgba(0,255,255,0.18) 0px, rgba(0,255,255,0.18) 1px, transparent 1px, transparent 14px)",
                             }}
                           />
 
-                          {/* Sweeping scan band */}
-                          <div className="absolute inset-x-0 h-1/3 animate-[scan-sweep_1.5s_ease-in-out_infinite]">
-                            <div
-                              className="w-full h-full"
-                              style={{
-                                background:
-                                  "linear-gradient(to bottom, transparent, rgba(0,255,255,0.28) 60%, rgba(0,255,255,0.55) 100%)",
-                              }}
-                            />
-                            <div className="w-full h-[2px] bg-primary shadow-[0_0_18px_4px_#00ffff]" />
+                          {/* Moving focus box — travels to the region the AI is reading */}
+                          <div
+                            className="absolute border-2 border-primary rounded-sm shadow-[0_0_18px_rgba(0,255,255,0.6)] overflow-hidden transition-all duration-500 ease-out"
+                            style={
+                              scanPhase === 0
+                                ? { top: "0%", left: "0%", width: "100%", height: "30%" }
+                                : scanPhase === 1
+                                ? { top: "70%", left: "0%", width: "62%", height: "30%" }
+                                : { top: "0%", left: "0%", width: "100%", height: "100%" }
+                            }
+                          >
+                            {/* Sweeping line inside the focus box */}
+                            <div className="absolute left-0 w-full h-[2px] bg-primary shadow-[0_0_16px_4px_#00ffff] animate-[scan_1.2s_ease-in-out_infinite]" />
+                            <div className="absolute inset-0 bg-gradient-to-b from-transparent via-primary/15 to-primary/25" />
                           </div>
 
-                          {/* Analyzing label */}
-                          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                            <Sparkles className="w-7 h-7 text-primary animate-pulse drop-shadow-[0_0_8px_#00ffff]" />
-                            <span className="font-mono text-[10px] sm:text-xs uppercase tracking-[0.25em] text-primary drop-shadow-[0_0_6px_#00ffff]">
-                              Analyzing
+                          {/* Phase label + progress dots */}
+                          <div className="absolute inset-x-0 bottom-2 flex flex-col items-center gap-1.5">
+                            <div className="flex items-center gap-1.5">
+                              <Sparkles className="w-4 h-4 text-primary animate-pulse drop-shadow-[0_0_8px_#00ffff]" />
+                              <span className="font-mono text-[10px] sm:text-xs uppercase tracking-[0.2em] text-primary drop-shadow-[0_0_6px_#00ffff]">
+                                {SCAN_PHASES[scanPhase].label}
+                              </span>
+                            </div>
+                            <span className="font-mono text-[8px] uppercase tracking-[0.25em] text-primary/60">
+                              {SCAN_PHASES[scanPhase].sub}
                             </span>
+                            <div className="flex gap-1.5 mt-0.5">
+                              {SCAN_PHASES.map((_, i) => (
+                                <span
+                                  key={i}
+                                  className={`h-1.5 rounded-full transition-all duration-300 ${
+                                    i === scanPhase
+                                      ? "w-5 bg-primary shadow-[0_0_8px_#00ffff]"
+                                      : i < scanPhase
+                                      ? "w-1.5 bg-primary"
+                                      : "w-1.5 bg-primary/25"
+                                  }`}
+                                />
+                              ))}
+                            </div>
                           </div>
                         </div>
                       )}

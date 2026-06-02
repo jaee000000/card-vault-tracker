@@ -432,6 +432,63 @@ async function lookupCard(
   return { priceGBP: 0, imageUrl: null, priceNote: jpSet ? "Japanese card — not in price database" : null };
 }
 
+/** Resolve a human-friendly set name + code + pocket count for auto-creating a binder. */
+async function resolveSetInfo(
+  setId: string,
+  setTotalHint: number
+): Promise<{ name: string; setCode: string; setTotal: number }> {
+  const id = setId.trim().toLowerCase();
+  const titleCase = (s: string) =>
+    s.replace(/\b\w/g, (c) => c.toUpperCase());
+
+  let name = "";
+  let setTotal = setTotalHint;
+
+  // 1. Japanese sets: our keyword map carries the real set name (e.g. m2a → "Mega Dream")
+  if (id && JP_SET_TO_PC[id]) {
+    name = titleCase(JP_SET_TO_PC[id]);
+  }
+
+  // 2. PokéTCG set lookup (English, or the English equivalent of a Japanese set)
+  if (id) {
+    const enId = JP_TO_EN[id] ?? id;
+    try {
+      const r = await fetch(`https://api.pokemontcg.io/v2/sets/${enId}`, {
+        signal: AbortSignal.timeout(6000),
+      });
+      if (r.ok) {
+        const j = (await r.json()) as {
+          data?: { name?: string; printedTotal?: number; total?: number };
+        };
+        const s = j.data;
+        if (s) {
+          if (!name && s.name) name = s.name;
+          // Only trust the API total when the scan didn't supply one
+          if (!setTotal && (s.printedTotal || s.total)) {
+            setTotal = s.printedTotal ?? s.total ?? 0;
+          }
+        }
+      }
+    } catch {
+      /* network/timeout — fall through to fallbacks */
+    }
+  }
+
+  const setCode = id ? id.toUpperCase() : (name ? name.slice(0, 6).toUpperCase() : "SET");
+  if (!name) name = id ? `Set ${setCode}` : setTotal ? `${setTotal}-Card Set` : "New Set";
+  if (!setTotal || setTotal < 1) setTotal = setTotalHint || 9;
+
+  return { name, setCode, setTotal };
+}
+
+// GET /api/scan/set-info?setId=m2a&setTotal=193
+router.get("/set-info", async (req, res) => {
+  const setId = req.query.setId ? String(req.query.setId) : "";
+  const setTotal = parseInt(String(req.query.setTotal ?? "0"), 10) || 0;
+  const info = await resolveSetInfo(setId, setTotal);
+  res.json(info);
+});
+
 // POST /api/scan/identify
 router.post("/identify", async (req, res) => {
   const { imageBase64, topCropBase64, bottomCropBase64 } = req.body as {

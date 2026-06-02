@@ -18,3 +18,11 @@ description: Durable gotchas for the Pokémon card tracker — pricing source, b
 # Deep-linking to a slot
 - Scanner navigates to `/binder/:id?slot=<setNumber>` after save; BinderView reads `?slot` via wouter `useSearch`, jumps page to floor((slot-1)/9), highlights via slot-pop animation.
 - **Why one-shot:** the consume effect depends on `binder`, which changes identity on refetch/refocus. Without a `consumedSlotRef` guard keyed on the raw slot string, a background refetch yanks the user back to the slot page after they navigate away. Always clamp slot to [1, effectiveTotal].
+
+# Set lookup for auto-creating binders
+- `GET /api/scan/set-info?setId=&setTotal=` resolves {name,setCode,setTotal}. Priority: JP_SET_TO_PC keyword (real JP set name, e.g. m2a→"Mega Dream") → PokéTCG /v2/sets (via JP_TO_EN equivalence) → fallback "Set <CODE>"/"<n>-Card Set".
+- Binder pockets = binder.setTotal. Auto-created binders MUST use the scanned printed total so pocket count matches the set (secret rares beyond total still get a slot via effectiveTotal in BinderView).
+- Scanner auto-binder match heuristic: existing binder by setCode first, then setTotal; if none, prefill the new-binder form from set-info so one tap creates a correctly-sized binder.
+
+# Scan animation is narrated, not real phases
+- The AI identify is ONE API call. The 3-pass UI (name → set/number → artwork) is purely visual: scanPhase state driven by timers, with a MIN_SCAN_MS floor so a fast response still shows all passes. Don't mistake it for 3 separate backend calls.
