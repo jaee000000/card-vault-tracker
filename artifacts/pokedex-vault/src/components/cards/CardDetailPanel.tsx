@@ -6,6 +6,7 @@ import { Loader2, RefreshCw, Trash2, Award, Sparkles, AlertCircle, ArrowLeft } f
 import { Button } from "@/components/ui/button";
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
+import { useHoloTilt } from "@/hooks/use-holo-tilt";
 
 type GradedValues = {
   raw: number;
@@ -19,6 +20,7 @@ export function CardDetailPanel({ cardId, open, onOpenChange }: { cardId: number
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
+  const holo = useHoloTilt<HTMLDivElement>(20);
 
   const { data: card, isLoading } = useGetCard(cardId || 0, {
     query: { enabled: !!cardId, queryKey: getGetCardQueryKey(cardId || 0) }
@@ -104,7 +106,15 @@ export function CardDetailPanel({ cardId, open, onOpenChange }: { cardId: number
             <div className="h-64 w-full bg-black flex items-center justify-center p-6 border-b border-border relative overflow-hidden">
               <div className="absolute inset-0 bg-primary/5 pattern-diagonal-lines opacity-20" />
               {card.imageUrl ? (
-                <img src={card.imageUrl} alt={card.name} className="h-full object-contain drop-shadow-2xl z-10" />
+                <div
+                  ref={holo.ref}
+                  style={holo.cardStyle}
+                  {...holo.handlers}
+                  className="relative h-full aspect-[2.5/3.5] rounded-lg overflow-hidden z-10 shadow-[0_8px_40px_rgba(0,0,0,0.8)] cursor-default"
+                >
+                  <img src={card.imageUrl} alt={card.name} className="w-full h-full object-cover" />
+                  <div style={holo.shimmerStyle} />
+                </div>
               ) : (
                 <div className="w-full h-full border-2 border-dashed border-border rounded-xl flex items-center justify-center z-10 bg-background/50">
                   <span className="font-mono text-muted-foreground uppercase tracking-widest text-sm">No Image</span>
