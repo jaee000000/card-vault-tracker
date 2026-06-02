@@ -2,11 +2,62 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { useGetCard, getGetCardQueryKey, useUpdateCard, useDeleteCard, useRefreshCardPrice, getGetBinderQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, RefreshCw, Trash2, Award, Sparkles, AlertCircle, ArrowLeft } from "lucide-react";
+import { Loader2, RefreshCw, Trash2, Award, Sparkles, AlertCircle, ArrowLeft, Maximize2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useLocation } from "wouter";
 import { useHoloTilt } from "@/hooks/use-holo-tilt";
+
+function FullscreenCardViewer({ imageUrl, name, onClose }: { imageUrl: string; name: string; onClose: () => void }) {
+  const holo = useHoloTilt<HTMLDivElement>(40);
+
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[200] flex flex-col items-center justify-center bg-black/96 backdrop-blur-sm"
+      style={{ animation: "fadeIn 0.2s ease-out" }}
+      onClick={onClose}
+    >
+      <style>{`@keyframes fadeIn { from { opacity:0; transform:scale(0.97) } to { opacity:1; transform:scale(1) } }`}</style>
+
+      {/* Close button */}
+      <button
+        onClick={onClose}
+        className="absolute top-4 right-4 z-10 p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-white border border-white/20 transition-colors"
+      >
+        <X className="w-5 h-5" />
+      </button>
+
+      {/* Card name */}
+      <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-white/40 mb-4 select-none">{name}</p>
+
+      {/* Full-size card with holo */}
+      <div
+        ref={holo.ref}
+        style={{ ...holo.cardStyle, maxHeight: "78vh", aspectRatio: "2.5/3.5", width: "auto" }}
+        {...holo.handlers}
+        onClick={(e) => e.stopPropagation()}
+        className="relative cursor-default rounded-xl overflow-hidden shadow-[0_24px_80px_rgba(0,0,0,0.9)]"
+      >
+        <img
+          src={imageUrl}
+          alt={name}
+          className="w-full h-full object-cover"
+        />
+        <div style={holo.shimmerStyle} />
+      </div>
+
+      <p className="font-mono text-[9px] text-white/25 mt-5 select-none">Tap anywhere to close · drag to tilt</p>
+    </div>,
+    document.body
+  );
+}
 
 type GradedValues = {
   raw: number;
@@ -21,6 +72,7 @@ export function CardDetailPanel({ cardId, open, onOpenChange }: { cardId: number
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
   const holo = useHoloTilt<HTMLDivElement>(20);
+  const [fullscreen, setFullscreen] = useState(false);
 
   const { data: card, isLoading } = useGetCard(cardId || 0, {
     query: { enabled: !!cardId, queryKey: getGetCardQueryKey(cardId || 0) }
@@ -95,6 +147,7 @@ export function CardDetailPanel({ cardId, open, onOpenChange }: { cardId: number
   };
 
   return (
+    <>
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full sm:max-w-md border-l border-border bg-card p-0 flex flex-col">
         {isLoading || !card ? (
@@ -106,15 +159,25 @@ export function CardDetailPanel({ cardId, open, onOpenChange }: { cardId: number
             <div className="h-64 w-full bg-black flex items-center justify-center p-6 border-b border-border relative overflow-hidden">
               <div className="absolute inset-0 bg-primary/5 pattern-diagonal-lines opacity-20" />
               {card.imageUrl ? (
-                <div
-                  ref={holo.ref}
-                  style={holo.cardStyle}
-                  {...holo.handlers}
-                  className="relative h-full aspect-[2.5/3.5] rounded-lg overflow-hidden z-10 shadow-[0_8px_40px_rgba(0,0,0,0.8)] cursor-default"
-                >
-                  <img src={card.imageUrl} alt={card.name} className="w-full h-full object-cover" />
-                  <div style={holo.shimmerStyle} />
-                </div>
+                <>
+                  <div
+                    ref={holo.ref}
+                    style={holo.cardStyle}
+                    {...holo.handlers}
+                    className="relative h-full aspect-[2.5/3.5] rounded-lg overflow-hidden z-10 shadow-[0_8px_40px_rgba(0,0,0,0.8)] cursor-default"
+                  >
+                    <img src={card.imageUrl} alt={card.name} className="w-full h-full object-cover" />
+                    <div style={holo.shimmerStyle} />
+                  </div>
+                  {/* Fullscreen expand button */}
+                  <button
+                    onClick={() => setFullscreen(true)}
+                    className="absolute bottom-3 right-3 z-20 p-1.5 rounded-md bg-black/60 hover:bg-black/80 border border-white/15 text-white/60 hover:text-white transition-all hover:scale-110"
+                    title="View fullscreen"
+                  >
+                    <Maximize2 className="w-3.5 h-3.5" />
+                  </button>
+                </>
               ) : (
                 <div className="w-full h-full border-2 border-dashed border-border rounded-xl flex items-center justify-center z-10 bg-background/50">
                   <span className="font-mono text-muted-foreground uppercase tracking-widest text-sm">No Image</span>
@@ -232,5 +295,14 @@ export function CardDetailPanel({ cardId, open, onOpenChange }: { cardId: number
         )}
       </SheetContent>
     </Sheet>
+
+    {fullscreen && card?.imageUrl && (
+      <FullscreenCardViewer
+        imageUrl={card.imageUrl}
+        name={card.name}
+        onClose={() => setFullscreen(false)}
+      />
+    )}
+    </>
   );
 }
