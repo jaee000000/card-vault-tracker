@@ -201,13 +201,19 @@ export default function Dashboard() {
                   {binder.name}
                 </h3>
 
-                <div className="mt-auto">
-                  <div className="flex justify-between text-[9px] sm:text-[10px] font-mono text-muted-foreground mb-1.5">
-                    <span className="uppercase tracking-wide">{binder.setTotal} slots</span>
-                    <span className="text-muted-foreground/60">0% complete</span>
-                  </div>
-                  <Progress value={0} className="h-1 sm:h-1.5" />
-                </div>
+                {(() => {
+                  const count = stats?.binderCounts?.[String(binder.id)] ?? 0;
+                  const pct = binder.setTotal > 0 ? Math.min(100, parseFloat(((count / binder.setTotal) * 100).toFixed(1))) : 0;
+                  return (
+                    <div className="mt-auto">
+                      <div className="flex justify-between text-[9px] sm:text-[10px] font-mono text-muted-foreground mb-1.5">
+                        <span className="uppercase tracking-wide">{count}/{binder.setTotal} slots</span>
+                        <span className={pct >= 100 ? "text-primary" : "text-muted-foreground/60"}>{pct}% complete</span>
+                      </div>
+                      <Progress value={pct} className="h-1 sm:h-1.5" />
+                    </div>
+                  );
+                })()}
               </div>
             </Link>
           ))}

@@ -223,7 +223,8 @@ export const GetVaultStatsResponse = zod.object({
   "totalValueGBP": zod.number(),
   "totalCards": zod.number(),
   "completedSets": zod.number(),
-  "totalBinders": zod.number()
+  "totalBinders": zod.number(),
+  "binderCounts": zod.record(zod.string(), zod.number()).optional()
 })
 
 

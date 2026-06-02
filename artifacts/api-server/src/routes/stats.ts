@@ -25,11 +25,15 @@ router.get("/vault", async (_req, res) => {
 
   const completedSets = binders.filter((b) => Number(b.scannedCards) >= b.setTotal).length;
 
+  const binderCounts: Record<number, number> = {};
+  for (const b of binders) binderCounts[b.id] = Number(b.scannedCards);
+
   res.json({
     totalValueGBP: parseFloat(Number(vaultRow.totalValueGBP).toFixed(2)),
     totalCards: Number(vaultRow.totalCards),
     completedSets,
     totalBinders: binders.length,
+    binderCounts,
   });
 });
 
