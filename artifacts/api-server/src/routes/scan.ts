@@ -9,7 +9,8 @@ const EUR_TO_GBP = 0.85;
 
 // Japanese set ID → nearest English set ID in PokéTCG
 const JP_TO_EN: Record<string, string> = {
-  "m2a": "sv2",   // Japanese "Mega Dream" (198/193) → English Paldea Evolved (193)
+  "m2a": "sv2",   // Japanese "Mega Dream" / Ascended Heroes (198/193) → English Paldea Evolved (193)
+  "m4":  "swsh11", // Japanese "Ninja Spinner" (83 cards) → English Lost Origin (approx era match)
   "sv1a": "sv1",  "sv1s": "sv1",  "sv1v": "sv1",
   "sv2a": "sv2",  "sv2d": "sv2",
   "sv3a": "sv3",  "sv3pt5a": "sv3pt5",
@@ -26,6 +27,7 @@ const JP_TO_EN: Record<string, string> = {
 const JP_SET_TO_PC: Record<string, string> = {
   "m2a": "mega dream",
   "m2b": "mega dream",
+  "m4":  "ninja spinner",
   "sv1a": "triplet beat",
   "sv2a": "clay burst",
   "sv2b": "snow hazard",
@@ -46,7 +48,7 @@ const JP_SET_TO_PC: Record<string, string> = {
 
 function isJapaneseSet(id: string): boolean {
   const low = id.toLowerCase();
-  return low in JP_TO_EN || /^(sv\d+[a-z]|s\d+[a-z])/i.test(low);
+  return low in JP_TO_EN || /^(sv\d+[a-z]|s\d+[a-z]|m\d+[a-z]?)/i.test(low);
 }
 
 // Common Japanese romaji → official English species names. The AI is told to
