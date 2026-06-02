@@ -125,6 +125,32 @@ export function CardDetailPanel({ cardId, open, onOpenChange }: { cardId: number
     };
   }, [open, cardId, card?.currentPriceGBP]);
 
+  // If a card's stored image is the user's own scan photo (not a proper card-art
+  // host), fetch the correct hi-res art once. The endpoint matches by name+number
+  // and persists the result, so we invalidate the query to re-render the new art.
+  useEffect(() => {
+    if (!open || !cardId || !card) return;
+    const img = card.imageUrl ?? "";
+    const isProperArt =
+      img.includes("scrydex.com") ||
+      img.includes("pokemontcg.io") ||
+      img.includes("pricecharting.com");
+    if (isProperArt) return;
+    const controller = new AbortController();
+    fetch(`/api/cards/${cardId}/hires-image`, { signal: controller.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { hiResUrl?: string } | null) => {
+        if (d?.hiResUrl && d.hiResUrl !== card.imageUrl) {
+          queryClient.invalidateQueries({ queryKey: getGetCardQueryKey(cardId) });
+          if (card.assignedBinderId) {
+            queryClient.invalidateQueries({ queryKey: getGetBinderQueryKey(card.assignedBinderId) });
+          }
+        }
+      })
+      .catch(() => { /* ignore */ });
+    return () => controller.abort();
+  }, [open, cardId, card?.imageUrl, card?.assignedBinderId]);
+
   const refreshPrice = useRefreshCardPrice();
   const deleteCard = useDeleteCard();
 

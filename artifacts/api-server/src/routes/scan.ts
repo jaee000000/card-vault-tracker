@@ -425,7 +425,7 @@ async function lookupCard(
     };
   }
 
-  // ── Phase 5: name-only fallback — price estimate, NO image (wrong art) ────────
+  // ── Phase 5: name-only fallback — price estimate + image from English twin ────
   if (firstName.length > 2) {
     const byName = await tcgFetch(`name:"${firstName}"`, 80);
     const candidates = byName.filter(c => namesMatch(name, c.name ?? ""));
@@ -434,21 +434,40 @@ async function lookupCard(
         Math.abs((a.set?.printedTotal ?? 9999) - setTotal) -
         Math.abs((b.set?.printedTotal ?? 9999) - setTotal)
       );
-    // Prefer cards that share the same rarity suffix (ex/GX/V/VMAX etc.) AND have a price.
-    // This avoids picking a cheap base-form card when the scanned card is an "ex" or "GX".
+
+    // PRICE: prefer cards that share the same rarity suffix (ex/GX/V/VMAX etc.) AND
+    // have a price, so we don't pick a cheap base-form card for an "ex"/"GX" scan.
     const suffix = /\b(ex|GX|V|VMAX|VSTAR|EX)\b/i.exec(name)?.[1]?.toLowerCase();
     const hasSuffix = (c: TCGCard) =>
       !suffix || (c.name ?? "").toLowerCase().includes(suffix);
     const priced = candidates.filter(c => bestPrice(c) > 0);
-    const matched =
+    const priceCard =
       sortBySetTotal(priced.filter(hasSuffix))[0] ??  // best: same suffix + priced
       sortBySetTotal(priced)[0] ??                     // fallback: any priced
       sortBySetTotal(candidates)[0];                   // last resort: 0-priced
-    if (matched) {
+
+    // IMAGE: only trust an EXACT name match — the same card has identical artwork
+    // worldwide (e.g. "Mega Greninja ex" EN Chaos Rising == JP M4). A loose match
+    // (base form for a Mega/ex) would show wrong art, so leave the image null then.
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const exactName = candidates.filter(
+      c => norm(c.name ?? "") === norm(name) && (c.images?.large || c.images?.small)
+    );
+    const imgCard =
+      exactName.find(c => c.number === numStr || c.number === String(setNumber)) ??
+      sortBySetTotal(exactName)[0];
+    const imageUrl = imgCard?.images?.large ?? imgCard?.images?.small ?? null;
+
+    if (priceCard || imageUrl) {
       const note = jpSet
         ? "Japanese card — price estimate from English equivalent"
         : "Approximate price — exact card not found";
-      return { priceGBP: bestPrice(matched), psa10GBP: null, imageUrl: null, priceNote: note };
+      return {
+        priceGBP: priceCard ? bestPrice(priceCard) : 0,
+        psa10GBP: null,
+        imageUrl,
+        priceNote: note,
+      };
     }
   }
 
@@ -625,12 +644,11 @@ If the card cannot be identified at all:
 
     // Correct known AI misreads of Japanese set codes.
     // Key: what AI returned. Value: [correct code, expected English set total].
-    // If the reported setTotal doesn't match the English set size, apply correction.
+    // Only apply when the reported setTotal does NOT match the real English set
+    // size — that mismatch is what proves it's actually the Japanese set.
+    // Only the xy4→m4 case is verified; do not add speculative entries.
     const SET_ID_FIXES: Record<string, [string, number]> = {
-      "xy4":  ["m4",  119],  // XY4 = Phantom Forces (119 cards); if total ≠ 119, likely M4 (83)
-      "xy3":  ["m3",  98 ],  // XY3 = Furious Fists (111 cards)
-      "xy2":  ["m2",  106],  // XY2 = Flashfire (106 cards)
-      "xy1":  ["m1",  146],  // XY base (146 cards)
+      "xy4": ["m4", 119], // XY4 = Phantom Forces (119 cards); if total ≠ 119, it's M4 (83)
     };
     if (setId) {
       const fix = SET_ID_FIXES[setId.toLowerCase()];

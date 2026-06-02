@@ -43,3 +43,21 @@ not the lookup. Verify a card's real price by querying PriceCharting directly an
 ## Backfill route for missing card images
 `POST /api/cards/backfill-images` (cards.ts) fills cards with null/empty image_url via `findCardImage`; only overwrites price when current <=0. Idempotent (skips rows that already have an image). Guarded in production by `x-admin-token` header === `ADMIN_TOKEN` env; open in dev for local seeding.
 **Note:** seed/demo cards use fictional set names (Chaos Rising/CHR, Abyss Eye/ABY, M2a Mega Dream ex/M2A) with numbers that don't map to real cards, so matched art is best-effort.
+
+## PriceCharting is UNREACHABLE from the production deployment (dev works)
+In the published/deployed environment, requests to pricecharting.com return an empty body (blocked), so every `priceChartingLookup` silently fails (caught) and falls through to the PokéTCG phases. In dev it works fine. This means Japanese cards scanned in production CANNOT use Phase 0/4 (PriceCharting) — they fall to Phase 5.
+**Why:** user reported "Price N/A" only on the published app for M4 Mega Greninja ex while dev priced it. Confirmed prod PriceCharting fetch returns 0 bytes.
+**How to apply:** any pricing/image path that only works via PriceCharting will NOT work in production. Make Japanese cards degrade gracefully through PokéTCG (Phase 5). Don't assume a dev-verified PriceCharting fix works in prod.
+
+## Phase 5 (English-equivalent fallback): split PRICE and IMAGE sources
+For Japanese cards that fall to Phase 5, PRICE and IMAGE come from DIFFERENT cards:
+- PRICE: best-priced English candidate that shares the same rarity suffix (ex/GX/V/VMAX/VSTAR), sorted by closest setTotal. A Japanese "Mega X ex" with no English price twin gets priced off the nearest English "X ex".
+- IMAGE: ONLY an EXACT normalized-name match (e.g. JP "Mega Greninja ex" == EN "Mega Greninja ex" Chaos Rising), tie-broken by matching card number. Modern Mega/ex cards share identical artwork worldwide, so the EN twin's image is correct art. A loose match (base form) would be wrong art → leave image null.
+**Why:** PokéTCG HAS "Mega Greninja ex" (Chaos Rising, set me4) at £0 with the correct scrydex image (me4-22); the price had to come from English "Greninja ex" (~£1.30) while the image came from the £0 exact twin.
+
+## AI misreads Japanese "m4" as English "xy4"
+GPT-4o reads the Japanese M-series set code "m4" as "xy4". Fixed two ways: prompt explicitly says m-series start with 'm' not 'xy' ("m4" ≠ "xy4"), AND a code-level SET_ID_FIXES map rewrites xy4→m4 ONLY when setTotal ≠ 119 (real XY4 Phantom Forces size). 
+**Why:** mismatch between reported setTotal and the real English set size is the only safe signal it's actually the JP set. Do NOT add speculative xy1/xy2/xy3 entries — their totals were guessed wrong and would misclassify real English XY cards.
+
+## Fixing an already-saved card's wrong image (the scan photo)
+A card added before a scan-image fix keeps the user's raw scan photo as image_url. backfill-images skips it (image not null) and refresh-price/SYNC only updates price. CardDetailPanel now auto-calls GET /api/cards/:id/hires-image on open when the stored image host is NOT scrydex/pokemontcg/pricecharting; that endpoint (tcgHiResLookup, exact name+number) finds correct art and persists it, then the query is invalidated to re-render.
