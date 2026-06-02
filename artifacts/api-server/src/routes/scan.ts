@@ -12,66 +12,88 @@ const openai = new OpenAI({
 const USD_TO_GBP = 0.79;
 const EUR_TO_GBP = 0.85;
 
+type PokeTCGCard = {
+  name?: string;
+  number?: string;
+  set?: { printedTotal?: number; total?: number };
+  images?: { small?: string; large?: string };
+  tcgplayer?: { prices?: Record<string, { market?: number }> };
+  cardmarket?: { prices?: { averageSellPrice?: number } };
+};
+
+function extractPrice(card: PokeTCGCard): number {
+  const tcgPrices = card.tcgplayer?.prices;
+  if (tcgPrices) {
+    const usd =
+      tcgPrices["holofoil"]?.market ??
+      tcgPrices["normal"]?.market ??
+      tcgPrices["reverseHolofoil"]?.market ??
+      Object.values(tcgPrices)[0]?.market;
+    if (usd && usd > 0) return parseFloat((usd * USD_TO_GBP).toFixed(2));
+  }
+  const cm = card.cardmarket?.prices?.averageSellPrice;
+  if (cm && cm > 0) return parseFloat((cm * EUR_TO_GBP).toFixed(2));
+  return 0;
+}
+
+async function pokeTCGFetch(q: string, pageSize = 250): Promise<PokeTCGCard[]> {
+  const url = `https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(q)}&pageSize=${pageSize}&select=tcgplayer,cardmarket,name,number,set,images`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(9000) });
+  if (!res.ok) return [];
+  const json = await res.json() as { data?: PokeTCGCard[] };
+  return json.data ?? [];
+}
+
 async function fetchPriceAndImageGBP(
   name: string,
   setNumber: number,
   setTotal: number
 ): Promise<{ priceGBP: number; imageUrl: string | null; officialName: string | null }> {
+  const numStr = String(setNumber).padStart(3, "0");
+
+  const pickBySetTotal = (cards: PokeTCGCard[]): PokeTCGCard | null => {
+    // Match exact number string then filter by set printedTotal == setTotal
+    const withNum = cards.filter(c => c.number === numStr || c.number === String(setNumber));
+    const exact = withNum.find(c => c.set?.printedTotal === setTotal || c.set?.total === setTotal);
+    if (exact) return exact;
+    // Fallback: closest printedTotal to setTotal
+    if (withNum.length) {
+      return withNum.sort((a, b) =>
+        Math.abs((a.set?.printedTotal ?? 9999) - setTotal) -
+        Math.abs((b.set?.printedTotal ?? 9999) - setTotal)
+      )[0];
+    }
+    return null;
+  };
+
   try {
-    const numStr = String(setNumber).padStart(3, "0");
-    const queries = [
-      `name:"${name}" number:${setNumber}`,
-      `name:"${name.split(" ")[0]}" number:${setNumber}`,
-      `number:${numStr}`,
-    ];
-
-    for (const q of queries) {
-      const url = `https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(q)}&pageSize=5&select=tcgplayer,cardmarket,name,number,images`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(7000) });
-      if (!res.ok) continue;
-
-      const json = await res.json() as {
-        data: Array<{
-          name?: string;
-          number?: string;
-          images?: { small?: string; large?: string };
-          tcgplayer?: { prices?: Record<string, { market?: number }> };
-          cardmarket?: { prices?: { averageSellPrice?: number } };
-        }>;
+    // Strategy 1: number-based lookup, large page, filter by set total client-side
+    const byNumber = await pokeTCGFetch(`number:${numStr}`, 250);
+    const match1 = pickBySetTotal(byNumber);
+    if (match1) {
+      return {
+        priceGBP: extractPrice(match1) || 0.99,
+        imageUrl: match1.images?.large ?? match1.images?.small ?? null,
+        officialName: match1.name ?? null,
       };
-      const cards = json.data ?? [];
-      if (!cards.length) continue;
+    }
 
-      // Pick the best match by set number
-      const best = cards.find(c => c.number === String(setNumber) || c.number === numStr) ?? cards[0];
-
-      let priceGBP = 0;
-      const tcgPrices = best.tcgplayer?.prices;
-      if (tcgPrices) {
-        const usd =
-          tcgPrices["holofoil"]?.market ??
-          tcgPrices["normal"]?.market ??
-          tcgPrices["reverseHolofoil"]?.market ??
-          Object.values(tcgPrices)[0]?.market;
-        if (usd && usd > 0) priceGBP = parseFloat((usd * USD_TO_GBP).toFixed(2));
-      }
-      if (!priceGBP) {
-        const cm = best.cardmarket?.prices?.averageSellPrice;
-        if (cm && cm > 0) priceGBP = parseFloat((cm * EUR_TO_GBP).toFixed(2));
-      }
-
-      const imageUrl = best.images?.large ?? best.images?.small ?? null;
-      const officialName = best.name ?? null;
-
-      return { priceGBP: priceGBP || 1.99, imageUrl, officialName };
+    // Strategy 2: name + number, no set filter (different page — broader search)
+    const firstName = name.split(/\s+/)[0];
+    const byName = await pokeTCGFetch(`name:"${firstName}" number:${setNumber}`, 50);
+    if (byName.length) {
+      const best = byName.find(c => c.set?.printedTotal === setTotal) ?? byName[0];
+      return {
+        priceGBP: extractPrice(best) || 0.99,
+        imageUrl: best.images?.large ?? best.images?.small ?? null,
+        officialName: best.name ?? null,
+      };
     }
   } catch (err) {
     console.warn("PokéTCG lookup failed:", err);
   }
 
-  // Fallback price
-  const seed = (name.length * setNumber * 17) % 5000;
-  return { priceGBP: parseFloat((1.5 + seed / 100).toFixed(2)), imageUrl: null, officialName: null };
+  return { priceGBP: 0, imageUrl: null, officialName: null };
 }
 
 // POST /api/scan/identify
@@ -153,10 +175,11 @@ If you cannot identify the card or read the set number, respond with:
     }
 
     // Fetch real price + official card art from PokéTCG
-    const { priceGBP, imageUrl, officialName } = await fetchPriceAndImageGBP(name, setNumber, setTotal);
+    // We trust the AI for the name (it reads the actual card); PokéTCG is used for price + image only
+    const { priceGBP, imageUrl } = await fetchPriceAndImageGBP(name, setNumber, setTotal);
 
     res.json({
-      name: officialName ?? name,
+      name,
       setNumber,
       setTotal,
       confidence,
