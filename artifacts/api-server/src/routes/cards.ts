@@ -2,7 +2,7 @@ import { Router } from "express";
 import OpenAI from "openai";
 import { db, cardsTable, bindersTable } from "@workspace/db";
 import { eq, or, isNull } from "drizzle-orm";
-import { findCardImage, priceChartingLookup, webSearchRawPriceGBP } from "./scan";
+import { findCardImage, priceChartingLookup, webSearchRawPriceGBP, webSearchOfficialImage } from "./scan";
 import {
   CreateCardBody,
   UpdateCardBody,
@@ -673,7 +673,13 @@ router.get("/:id/hires-image", async (req, res) => {
     return res.json({ hiResUrl: card.imageUrl });
   }
 
-  const hiResUrl = await tcgHiResLookup(card.name, card.setNumber);
+  let hiResUrl = await tcgHiResLookup(card.name, card.setNumber);
+  // PokéTCG had no match — for Japanese-only cards (and in prod, where
+  // PriceCharting is blocked), fall back to a validated official-art web search.
+  if (!hiResUrl) {
+    const [binder] = await db.select().from(bindersTable).where(eq(bindersTable.id, card.assignedBinderId));
+    hiResUrl = await webSearchOfficialImage(card.name, card.setNumber, card.setTotal, binder?.setCode);
+  }
   if (hiResUrl) {
     await db.update(cardsTable).set({ imageUrl: hiResUrl }).where(eq(cardsTable.id, id));
   }

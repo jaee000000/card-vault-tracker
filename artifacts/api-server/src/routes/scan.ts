@@ -283,9 +283,14 @@ export async function findCardImage(
     };
   }
 
-  // Last resort: PriceCharting without the Japanese hint
+  // PriceCharting without the Japanese hint
   const pc = await priceChartingLookup(name, setNumber, setCode);
   if (pc && pc.imageUrl) return { imageUrl: pc.imageUrl, priceGBP: pc.priceGBP };
+
+  // Last resort: live web search for official art (works from prod, where
+  // PriceCharting is blocked). Validated to actually render before we accept it.
+  const webImg = await webSearchOfficialImage(name, setNumber, setTotal, setCode);
+  if (webImg) return { imageUrl: webImg, priceGBP: 0 };
 
   return { imageUrl: null, priceGBP: 0 };
 }
@@ -375,6 +380,137 @@ export async function webSearchRawPriceGBP(
   } catch (err) {
     console.warn("[price] web-search failed:", (err as Error).message);
     return 0;
+  }
+}
+
+/**
+ * Trusted card-image hosts. Acts as both an SSRF guard (the URLs come from
+ * untrusted AI output, so we only ever fetch known public card CDNs — never
+ * arbitrary hosts, IP literals, or internal addresses) and a correctness guard
+ * (these are reputable official/community card sources, not random listings).
+ */
+const IMAGE_HOST_ALLOWLIST = [
+  "images.pokemontcg.io",
+  "pokemontcg.io",
+  "pokemon-card.com",
+  "tcgplayer.com",
+  "limitlesstcg.com",
+  "serebii.net",
+  "bulbagarden.net",
+];
+
+/** A URL is allowed only when its hostname is (or ends with) a trusted host. */
+function isAllowedImageHost(url: string): boolean {
+  try {
+    const h = new URL(url).hostname.toLowerCase();
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return false; // no IP literals
+    return IMAGE_HOST_ALLOWLIST.some((d) => h === d || h.endsWith("." + d));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Confirm a candidate image URL actually loads as an image FROM THIS SERVER.
+ * Because this runs in production, a pass means the URL is reachable and
+ * hot-linkable from the deployed environment (not 403/empty/HTML). We never
+ * store a URL we can't prove renders, so cards never show a broken image.
+ */
+async function validateImageUrl(url: string): Promise<boolean> {
+  if (!isAllowedImageHost(url)) return false;
+  try {
+    const r = await fetch(url, {
+      signal: AbortSignal.timeout(6000),
+      headers: { "User-Agent": "Mozilla/5.0", Accept: "image/*" },
+    });
+    if (!r.ok) return false;
+    const ct = r.headers.get("content-type") ?? "";
+    if (!ct.startsWith("image/")) return false;
+    const len = Number(r.headers.get("content-length") ?? "0");
+    if (len && len < 1000) return false; // tiny = tracking pixel / placeholder
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Last-resort artwork: a live web search for a direct, official card-image URL.
+ * Mirrors webSearchRawPriceGBP — uses gpt-4o-search-preview, which reaches the
+ * open web from production where PriceCharting is blocked. Only returns a URL
+ * that we have re-fetched and confirmed renders as a real image from prod, so a
+ * Japanese-only card not in PokéTCG still shows official art instead of the
+ * user's scan photo. Returns null when nothing reliable is found.
+ */
+export async function webSearchOfficialImage(
+  name: string,
+  setNumber: number,
+  setTotal: number,
+  setId?: string
+): Promise<string | null> {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return null;
+  const setName = setId ? JP_SET_TO_PC[setId.toLowerCase()] : undefined;
+  const desc =
+    `${name} ${setTotal > 0 ? `${setNumber}/${setTotal}` : `#${setNumber}`}` +
+    (setId ? ` (set code ${setId.toUpperCase()}${setName ? `, "${setName}"` : ""})` : "");
+  try {
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(20000),
+      body: JSON.stringify({
+        model: "gpt-4o-search-preview",
+        web_search_options: { search_context_size: "low" },
+        messages: [
+          {
+            role: "user",
+            content:
+              `Find direct image-file URLs of the OFFICIAL front artwork for this Pokémon card: ${desc}. ` +
+              `Prefer hot-linkable, official/reliable sources whose URLs end in .jpg/.jpeg/.png/.webp: ` +
+              `images.pokemontcg.io, the official Japanese site pokemon-card.com, tcgplayer product images, limitlesstcg.com, serebii.net, bulbapedia. ` +
+              `The image must show ONLY this single card's front (not a graded slab, not a lot of multiple cards, not a back). ` +
+              `Return up to 3 candidate URLs, best first. ` +
+              `Reply with ONLY a JSON object and nothing else: {"image_urls": [<direct image url strings>]}`,
+          },
+        ],
+      }),
+    });
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const content = data.choices?.[0]?.message?.content ?? "";
+    // Pull candidate URLs whether they arrive as a JSON array or loose in prose.
+    const urls: string[] = [];
+    const arr = content.match(/"image_urls"\s*:\s*\[([\s\S]*?)\]/i);
+    const scope = arr ? arr[1] : content;
+    const re = /https?:\/\/[^\s"'<>)\]]+?\.(?:jpg|jpeg|png|webp)/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(scope)) !== null) {
+      if (!urls.includes(m[0]) && isAllowedImageHost(m[0])) urls.push(m[0]);
+    }
+    // Prefer URLs whose path references this card's number — a soft correctness
+    // signal that the art is the right card, not just a renderable image.
+    const numStr = String(setNumber);
+    const numPad = numStr.padStart(3, "0");
+    const ranked = urls.sort((a, b) => {
+      const score = (u: string) =>
+        new RegExp(`(^|[^0-9])(${numPad}|${numStr})([^0-9]|$)`).test(new URL(u).pathname) ? 0 : 1;
+      return score(a) - score(b);
+    });
+    const candidates = ranked.slice(0, 3);
+    // Validate in parallel (bounds tail latency), then take the first that
+    // both renders AND, when any candidate references the number, matches it.
+    const results = await Promise.all(candidates.map((u) => validateImageUrl(u)));
+    for (let i = 0; i < candidates.length; i++) {
+      if (results[i]) {
+        console.log(`[image] web-search: "${name}" → ${candidates[i]}`);
+        return candidates[i];
+      }
+    }
+    return null;
+  } catch (err) {
+    console.warn("[image] web-search failed:", (err as Error).message);
+    return null;
   }
 }
 
@@ -543,18 +679,24 @@ async function lookupCard(
           note = "Price from live web search (sold listings)";
         }
       }
-      return { priceGBP, psa10GBP: null, imageUrl, priceNote: note };
+      // No official art from the English twin — find it via live web search.
+      let img = imageUrl;
+      if (!img) img = await webSearchOfficialImage(name, setNumber, setTotal, setId);
+      return { priceGBP, psa10GBP: null, imageUrl: img, priceNote: note };
     }
   }
 
-  // ── Phase 6: nothing in any database — live web search for the raw price ─────
-  const webPrice = await webSearchRawPriceGBP(name, setNumber, setTotal, setId);
-  if (webPrice > 0) {
+  // ── Phase 6: nothing in any database — live web search for price + art ───────
+  const [webPrice, webImg] = await Promise.all([
+    webSearchRawPriceGBP(name, setNumber, setTotal, setId),
+    webSearchOfficialImage(name, setNumber, setTotal, setId),
+  ]);
+  if (webPrice > 0 || webImg) {
     return {
       priceGBP: webPrice,
       psa10GBP: null,
-      imageUrl: null,
-      priceNote: "Price from live web search (sold listings)",
+      imageUrl: webImg,
+      priceNote: webPrice > 0 ? "Price from live web search (sold listings)" : (jpSet ? "Japanese card — not in price database" : null),
     };
   }
 
