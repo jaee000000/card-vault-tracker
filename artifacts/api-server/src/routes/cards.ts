@@ -1,4 +1,5 @@
 import { Router } from "express";
+import OpenAI from "openai";
 import { db, cardsTable, bindersTable } from "@workspace/db";
 import { eq, or, isNull } from "drizzle-orm";
 import { findCardImage } from "./scan";
@@ -242,6 +243,83 @@ router.delete("/:id", async (req, res) => {
   }
   await db.delete(cardsTable).where(eq(cardsTable.id, parse.data.id));
   res.status(204).send();
+});
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// AI-estimated graded values (PSA 10 Gem Mint & BGS Pristine 10 / Black Label).
+// Real graded sales data has no free API, so we use the model's hobby knowledge
+// to estimate the typical premium over the card's raw market value.
+router.get("/:id/graded-values", async (req, res) => {
+  const parse = GetCardParams.safeParse({ id: Number(req.params.id) });
+  if (!parse.success) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const [card] = await db.select().from(cardsTable).where(eq(cardsTable.id, parse.data.id));
+  if (!card) {
+    res.status(404).json({ error: "Card not found" });
+    return;
+  }
+  const [binder] = await db.select().from(bindersTable).where(eq(bindersTable.id, card.assignedBinderId));
+  const raw = Number(card.currentPriceGBP);
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o",
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a Pokémon TCG grading-market analyst. Given a card and its RAW (ungraded) market value in GBP, " +
+            "estimate the current secondary-market value of the card in two top grades, in GBP. " +
+            "PSA 10 = Gem Mint. BGS 10 = BGS Black Label / Pristine 10 (rarer and worth more than PSA 10). " +
+            "Base your multiples on real hobby norms: PSA 10 is typically ~2x-8x raw (higher for vintage/chase, lower for bulk modern), " +
+            "and BGS Pristine 10 is typically 1.3x-3x the PSA 10 value. Account for set, rarity, age and demand. " +
+            'Respond ONLY with JSON: {"psa10": <number>, "bgs10": <number>, "confidence": "low"|"medium"|"high"}. Values are GBP numbers, no symbols.',
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            name: card.name,
+            setNumber: card.setNumber,
+            setTotal: card.setTotal,
+            setCode: binder?.setCode ?? null,
+            setName: binder?.name ?? null,
+            rawMarketValueGBP: raw,
+          }),
+        },
+      ],
+    });
+
+    const content = completion.choices[0]?.message?.content ?? "{}";
+    const parsed = JSON.parse(content) as { psa10?: number; bgs10?: number; confidence?: string };
+
+    let psa10 = typeof parsed.psa10 === "number" && parsed.psa10 > 0 ? parsed.psa10 : raw * 4;
+    let bgs10 = typeof parsed.bgs10 === "number" && parsed.bgs10 > 0 ? parsed.bgs10 : psa10 * 1.6;
+    // Sanity bounds: graded >= raw, BGS Pristine 10 >= PSA 10, and cap absurd
+    // hallucinations (generous ceilings still allow large vintage premiums).
+    psa10 = Math.min(Math.max(psa10, raw), Math.max(raw, 1) * 60);
+    bgs10 = Math.min(Math.max(bgs10, psa10), psa10 * 5);
+
+    res.json({
+      raw: parseFloat(raw.toFixed(2)),
+      psa10: parseFloat(psa10.toFixed(2)),
+      bgs10: parseFloat(bgs10.toFixed(2)),
+      confidence: parsed.confidence === "high" || parsed.confidence === "low" ? parsed.confidence : "medium",
+      estimated: true,
+    });
+  } catch (err) {
+    const e = err as { status?: number };
+    if (e?.status === 429) {
+      res.status(429).json({ error: "quota_exceeded", detail: "OpenAI quota exceeded." });
+      return;
+    }
+    console.warn("Graded value lookup failed:", err);
+    res.status(502).json({ error: "lookup_failed", detail: "Could not estimate graded values." });
+  }
 });
 
 router.post("/:id/refresh-price", async (req, res) => {

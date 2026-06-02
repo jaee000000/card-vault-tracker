@@ -26,3 +26,7 @@ description: Durable gotchas for the Pokémon card tracker — pricing source, b
 
 # Scan animation is narrated, not real phases
 - The AI identify is ONE API call. The 3-pass UI (name → set/number → artwork) is purely visual: scanPhase state driven by timers, with a MIN_SCAN_MS floor so a fast response still shows all passes. Don't mistake it for 3 separate backend calls.
+
+# Graded values (PSA 10 / BGS Pristine 10) are AI-estimated
+- `GET /api/cards/:id/graded-values` uses gpt-4o (json_object) to ESTIMATE psa10 & bgs10 in GBP from the card's raw price — there is no free graded-sales API. Server clamps psa10>=raw, bgs10>=psa10; UI badges it "AI Estimate · <confidence> conf." so it's never presented as real sold data.
+- CardDetailPanel fetches it on sheet open via plain fetch (not the generated client), with a cancelled flag for stale-response safety. Same relative `/api/...` pattern as scan set-info.
