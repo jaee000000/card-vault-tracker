@@ -1,22 +1,27 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: PokéVault Card Collection Tracker API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: binders
+    description: Digital binder folders (expansion sets)
+  - name: cards
+    description: Scanned card objects
+  - name: stats
+    description: Vault analytics and aggregates
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +29,242 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /binders:
+    get:
+      operationId: listBinders
+      tags: [binders]
+      summary: List all binders
+      responses:
+        "200":
+          description: List of binders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Binder"
+    post:
+      operationId: createBinder
+      tags: [binders]
+      summary: Create a new binder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BinderInput"
+      responses:
+        "201":
+          description: Created binder
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Binder"
+
+  /binders/{id}:
+    get:
+      operationId: getBinder
+      tags: [binders]
+      summary: Get a binder with its cards
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Binder detail with cards
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BinderDetail"
+        "404":
+          description: Not found
+    patch:
+      operationId: updateBinder
+      tags: [binders]
+      summary: Update a binder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BinderUpdate"
+      responses:
+        "200":
+          description: Updated binder
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Binder"
+    delete:
+      operationId: deleteBinder
+      tags: [binders]
+      summary: Delete a binder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /cards:
+    get:
+      operationId: listCards
+      tags: [cards]
+      summary: List all cards (optionally filtered by binder)
+      parameters:
+        - name: binderId
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of cards
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Card"
+    post:
+      operationId: createCard
+      tags: [cards]
+      summary: Add a scanned card
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CardInput"
+      responses:
+        "201":
+          description: Created card
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Card"
+
+  /cards/{id}:
+    get:
+      operationId: getCard
+      tags: [cards]
+      summary: Get a card by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Card detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Card"
+        "404":
+          description: Not found
+    patch:
+      operationId: updateCard
+      tags: [cards]
+      summary: Update card details (condition, price, etc.)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CardUpdate"
+      responses:
+        "200":
+          description: Updated card
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Card"
+    delete:
+      operationId: deleteCard
+      tags: [cards]
+      summary: Delete a card from the collection
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /cards/{id}/refresh-price:
+    post:
+      operationId: refreshCardPrice
+      tags: [cards]
+      summary: Trigger a live price refresh for a card
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Updated card with refreshed price
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Card"
+
+  /stats/vault:
+    get:
+      operationId: getVaultStats
+      tags: [stats]
+      summary: Get vault-wide telemetry (total value, card count, completed sets)
+      responses:
+        "200":
+          description: Vault statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VaultStats"
+
+  /stats/binder/{id}:
+    get:
+      operationId: getBinderStats
+      tags: [stats]
+      summary: Get per-binder completion stats
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Binder stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BinderStats"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +275,147 @@ components:
       required:
         - status
 
+    Binder:
+      type: object
+      required: [id, name, setCode, setTotal, createdAt]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        setCode:
+          type: string
+        setTotal:
+          type: integer
+        coverImageUrl:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    BinderDetail:
+      type: object
+      required: [id, name, setCode, setTotal, createdAt, cards]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        setCode:
+          type: string
+        setTotal:
+          type: integer
+        coverImageUrl:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        cards:
+          type: array
+          items:
+            $ref: "#/components/schemas/Card"
+
+    BinderInput:
+      type: object
+      required: [name, setCode, setTotal]
+      properties:
+        name:
+          type: string
+        setCode:
+          type: string
+        setTotal:
+          type: integer
+        coverImageUrl:
+          type: string
+
+    BinderUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        coverImageUrl:
+          type: string
+
+    Card:
+      type: object
+      required: [id, name, setNumber, setTotal, condition, currentPriceGBP, assignedBinderId, createdAt]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        setNumber:
+          type: integer
+        setTotal:
+          type: integer
+        condition:
+          type: string
+        currentPriceGBP:
+          type: number
+        imageUrl:
+          type: ["string", "null"]
+        assignedBinderId:
+          type: integer
+        lastPriceRefreshedAt:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    CardInput:
+      type: object
+      required: [name, setNumber, setTotal, assignedBinderId]
+      properties:
+        name:
+          type: string
+        setNumber:
+          type: integer
+        setTotal:
+          type: integer
+        condition:
+          type: string
+        currentPriceGBP:
+          type: number
+        imageUrl:
+          type: string
+        assignedBinderId:
+          type: integer
+
+    CardUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        condition:
+          type: string
+        currentPriceGBP:
+          type: number
+        imageUrl:
+          type: string
+
+    VaultStats:
+      type: object
+      required: [totalValueGBP, totalCards, completedSets, totalBinders]
+      properties:
+        totalValueGBP:
+          type: number
+        totalCards:
+          type: integer
+        completedSets:
+          type: integer
+        totalBinders:
+          type: integer
+
+    BinderStats:
+      type: object
+      required: [binderId, binderName, totalCards, scannedCards, completionPercent, totalValueGBP]
+      properties:
+        binderId:
+          type: integer
+        binderName:
+          type: string
+        totalCards:
+          type: integer
+        scannedCards:
+          type: integer
+        completionPercent:
+          type: number
+        totalValueGBP:
+          type: number
