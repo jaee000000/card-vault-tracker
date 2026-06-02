@@ -173,7 +173,7 @@ export default function Collection() {
                     {/* Top-right PSA10 hint */}
                     {card.psa10GBP && (
                       <div className="absolute top-1.5 right-1.5 bg-background/80 backdrop-blur-sm rounded px-1 py-0.5 font-mono text-[7px] text-primary border border-primary/20">
-                        PSA £{card.psa10GBP >= 1000 ? `${(card.psa10GBP / 1000).toFixed(1)}k` : card.psa10GBP.toFixed(0)}
+                        PSA £{card.psa10GBP >= 1000 ? `${(card.psa10GBP / 1000).toFixed(1)}k` : card.psa10GBP.toFixed(1)}
                       </div>
                     )}
                   </div>
