@@ -139,11 +139,11 @@ async function tcgFetch(q: string, pageSize = 250): Promise<TCGCard[]> {
 }
 
 /** Search PriceCharting (no API token needed for search-products endpoint) */
-async function priceChartingLookup(
+export async function priceChartingLookup(
   name: string,
   setNumber: number,
   setId?: string
-): Promise<{ priceGBP: number; imageUrl: string | null } | null> {
+): Promise<{ priceGBP: number; psa10GBP: number | null; imageUrl: string | null } | null> {
   const pcKeyword = setId ? (JP_SET_TO_PC[setId.toLowerCase()] ?? "") : "";
 
   // Build queries from most to least specific
@@ -288,14 +288,20 @@ export async function findCardImage(
   return { imageUrl: null, priceGBP: 0 };
 }
 
-/** Convert a PriceCharting product to our price/image shape (price1 = ungraded/raw). */
-function toPrice(p: PCProduct): { priceGBP: number; imageUrl: string | null } {
-  const raw = p.price1 ?? "";
-  const priceUSD = parseFloat(raw.replace(/[^0-9.]/g, "")) || 0;
-  const priceGBP = priceUSD > 0 ? +(priceUSD * USD_TO_GBP).toFixed(2) : 0;
+/**
+ * Convert a PriceCharting product to our price/image shape.
+ * price1 = ungraded/raw, price2 = PSA 10, price3 = PSA 9.
+ */
+function toPrice(p: PCProduct): { priceGBP: number; psa10GBP: number | null; imageUrl: string | null } {
+  const rawUSD = parseFloat((p.price1 ?? "").replace(/[^0-9.]/g, "")) || 0;
+  const priceGBP = rawUSD > 0 ? +(rawUSD * USD_TO_GBP).toFixed(2) : 0;
+
+  const psa10USD = parseFloat((p.price2 ?? "").replace(/[^0-9.]/g, "")) || 0;
+  const psa10GBP = psa10USD > 0 ? +(psa10USD * USD_TO_GBP).toFixed(2) : null;
+
   const imgRaw = p.imageUri ?? null;
   const imageUrl = imgRaw && !imgRaw.includes("no-image-available") ? imgRaw : null;
-  return { priceGBP, imageUrl };
+  return { priceGBP, psa10GBP, imageUrl };
 }
 
 async function lookupCard(

@@ -2,7 +2,7 @@ import { Router } from "express";
 import OpenAI from "openai";
 import { db, cardsTable, bindersTable } from "@workspace/db";
 import { eq, or, isNull } from "drizzle-orm";
-import { findCardImage } from "./scan";
+import { findCardImage, priceChartingLookup } from "./scan";
 import {
   CreateCardBody,
   UpdateCardBody,
@@ -308,7 +308,7 @@ type GradedEstimate = {
   psa10: number;
   bgs10: number;
   confidence: "low" | "medium" | "high";
-  source: "web-search" | "ai-estimate";
+  source: "pricecharting" | "web-search" | "ai-estimate";
 };
 
 // For web-search: only floor (graded >= raw); real prices have no meaningful ceiling.
@@ -332,8 +332,9 @@ function extractJsonFromText(text: string): Record<string, unknown> {
   try { return JSON.parse(match[0]); } catch { return {}; }
 }
 
-// Step 1: Try gpt-4o-search-preview which does LIVE WEB SEARCHES for real sold prices.
-// If it can't find data (or quota hit), fall back to gpt-4o knowledge-based estimate.
+// Step 1: PriceCharting direct lookup (price2 = PSA 10 sale data — most accurate)
+// Step 2: gpt-4o-search-preview live web search
+// Step 3: gpt-4o knowledge-based estimate (fallback)
 async function estimateGradedValues(
   card: typeof cardsTable.$inferSelect,
   binder: typeof bindersTable.$inferSelect | undefined
@@ -346,7 +347,21 @@ async function estimateGradedValues(
     `card ${card.setNumber}/${card.setTotal}`,
   ].filter(Boolean).join(" ");
 
-  // --- Live web search via gpt-4o-search-preview ---
+  // --- Phase 0: PriceCharting (price2 = PSA 10, no AI needed) ---
+  try {
+    const setCode = binder?.setCode?.toLowerCase();
+    const pc = await priceChartingLookup(card.name, card.setNumber, setCode);
+    if (pc?.psa10GBP && pc.psa10GBP > 0) {
+      const psa10 = parseFloat(Math.max(pc.psa10GBP, raw).toFixed(2));
+      const bgs10 = parseFloat((psa10 * 1.6).toFixed(2));
+      console.log(`[graded] pricecharting: "${card.name}" PSA10=£${psa10} BGS10=£${bgs10}`);
+      return { psa10, bgs10, confidence: "high", source: "pricecharting" };
+    }
+  } catch (err) {
+    console.warn("[graded] PriceCharting lookup failed, trying AI:", (err as Error).message);
+  }
+
+  // --- Phase 1: Live web search via gpt-4o-search-preview ---
   try {
     const searchResp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -437,7 +452,7 @@ function gradedIsStale(card: typeof cardsTable.$inferSelect): boolean {
 type EnsuredGraded = {
   card: typeof cardsTable.$inferSelect;
   confidence: "low" | "medium" | "high";
-  source: "cached" | "web-search" | "ai-estimate";
+  source: "cached" | "pricecharting" | "web-search" | "ai-estimate";
 };
 
 async function ensureGradedValues(card: typeof cardsTable.$inferSelect): Promise<EnsuredGraded> {

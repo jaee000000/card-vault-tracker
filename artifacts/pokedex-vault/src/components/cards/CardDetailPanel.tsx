@@ -152,7 +152,7 @@ export function CardDetailPanel({ cardId, open, onOpenChange }: { cardId: number
                   {graded && (
                     <span className={`text-[9px] font-mono uppercase tracking-wider flex items-center gap-1 ${graded.source === "web-search" ? "text-primary/80" : "text-muted-foreground/70"}`}>
                       <Sparkles className="w-2.5 h-2.5 text-primary" />
-                      {graded.source === "web-search" ? "Live Price" : `AI Estimate · ${graded.confidence} conf.`}
+                      {graded.source === "pricecharting" ? "PriceCharting · Live" : graded.source === "web-search" ? "AI Web Search" : `AI Estimate · ${graded.confidence} conf.`}
                     </span>
                   )}
                 </div>
