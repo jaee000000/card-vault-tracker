@@ -7,17 +7,39 @@ import {
 import { useParams, Link, useSearch } from "wouter";
 import { ChevronLeft, ChevronRight, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { QuickAddCardDialog } from "@/components/cards/QuickAddCardDialog";
 import { CardDetailPanel } from "@/components/cards/CardDetailPanel";
+import { motion, AnimatePresence } from "framer-motion";
+
+const pageVariants = {
+  enter: (dir: number) => ({
+    x: dir > 0 ? "45%" : "-45%",
+    opacity: 0,
+    scale: 0.97,
+  }),
+  center: {
+    x: 0,
+    opacity: 1,
+    scale: 1,
+    transition: { duration: 0.22, ease: [0.25, 0.46, 0.45, 0.94] as const },
+  },
+  exit: (dir: number) => ({
+    x: dir > 0 ? "-45%" : "45%",
+    opacity: 0,
+    scale: 0.97,
+    transition: { duration: 0.16, ease: [0.55, 0, 1, 0.45] as const },
+  }),
+};
 
 export default function BinderView() {
   const params = useParams();
   const search = useSearch();
   const binderId = parseInt(params.id || "0", 10);
   const [currentPage, setCurrentPage] = useState(0);
+  const [direction, setDirection] = useState(0);
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<number | null>(null);
   const [highlightSlot, setHighlightSlot] = useState<number | null>(null);
@@ -32,8 +54,6 @@ export default function BinderView() {
 
   const cards = binder?.cards || [];
   const setTotal = binder?.setTotal || 9;
-  // Secret-rare / alt-art cards can be numbered above the printed set total
-  // (e.g. 224/193). Extend the binder so those cards still have a slot.
   const maxCardNumber = cards.reduce((m, c) => Math.max(m, c.setNumber), 0);
   const effectiveTotal = Math.max(setTotal, maxCardNumber);
   const totalPages = Math.ceil(effectiveTotal / 9);
@@ -41,9 +61,29 @@ export default function BinderView() {
   const getCardForSlot = (slotNumber: number) =>
     cards.find((c) => c.setNumber === slotNumber);
 
+  const paginate = useCallback(
+    (dir: number) => {
+      const next = Math.min(Math.max(currentPage + dir, 0), totalPages - 1);
+      if (next !== currentPage) {
+        setDirection(dir);
+        setCurrentPage(next);
+      }
+    },
+    [currentPage, totalPages]
+  );
+
+  // Keyboard arrow navigation
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") paginate(1);
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") paginate(-1);
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [paginate]);
+
   // Deep-link: ?slot=126 jumps to that card's page and briefly highlights it.
-  // One-shot per slot value so a background refetch can't yank the user back
-  // to this page after they navigate away.
   const consumedSlotRef = useRef<string | null>(null);
   useEffect(() => {
     if (!binder) return;
@@ -52,6 +92,7 @@ export default function BinderView() {
     if (!slot || consumedSlotRef.current === raw) return;
     consumedSlotRef.current = raw;
     const clamped = Math.min(Math.max(slot, 1), effectiveTotal);
+    setDirection(0);
     setCurrentPage(Math.floor((clamped - 1) / 9));
     setHighlightSlot(clamped);
     const t = setTimeout(() => setHighlightSlot(null), 2600);
@@ -119,95 +160,105 @@ export default function BinderView() {
             ))}
           </div>
 
-          <div className="pl-5 sm:pl-8 flex-1 flex flex-col p-2 sm:p-4 min-h-0">
-            <div className="grid grid-cols-3 grid-rows-3 gap-1.5 sm:gap-3 flex-1 min-h-0">
-              {Array.from({ length: 9 }).map((_, i) => {
-                const slotNumber = currentPage * 9 + i + 1;
-                const card = getCardForSlot(slotNumber);
-                // Beyond the printed total, only render slots that hold a card
-                // (secret rares / alt arts). Pure padding slots stay blank.
-                if (slotNumber > binder.setTotal && !card) {
-                  return <div key={i} className="rounded bg-background/10" />;
-                }
+          <div className="pl-5 sm:pl-8 flex-1 flex flex-col p-2 sm:p-4 min-h-0 overflow-hidden">
+            {/* Animated page grid */}
+            <AnimatePresence mode="wait" custom={direction} initial={false}>
+              <motion.div
+                key={currentPage}
+                custom={direction}
+                variants={pageVariants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                className="grid grid-cols-3 grid-rows-3 gap-1.5 sm:gap-3 flex-1 min-h-0"
+                style={{ willChange: "transform, opacity" }}
+              >
+                {Array.from({ length: 9 }).map((_, i) => {
+                  const slotNumber = currentPage * 9 + i + 1;
+                  const card = getCardForSlot(slotNumber);
+                  if (slotNumber > binder.setTotal && !card) {
+                    return <div key={i} className="rounded bg-background/10" />;
+                  }
 
-                const isHighlighted = highlightSlot === slotNumber;
+                  const isHighlighted = highlightSlot === slotNumber;
 
-                return (
-                  <button
-                    key={slotNumber}
-                    onClick={() =>
-                      card ? setSelectedCardId(card.id) : setSelectedSlot(slotNumber)
-                    }
-                    className={cn(
-                      "relative group rounded-lg overflow-hidden aspect-[2.5/3.5] transition-all duration-200 flex flex-col w-full h-full",
-                      card
-                        ? "border-2 border-primary/30 hover:border-primary bg-background hover:scale-[1.02] shadow-[0_0_10px_rgba(0,255,255,0.05)] hover:shadow-[0_0_16px_rgba(0,255,255,0.2)] active:scale-[1.01]"
-                        : "border border-dashed border-border hover:border-muted-foreground bg-background/40 opacity-60 hover:opacity-100 flex items-center justify-center active:opacity-80",
-                      isHighlighted &&
-                        "!border-primary border-2 z-10 animate-[slot-pop_2.4s_ease-out] shadow-[0_0_22px_rgba(0,255,255,0.55)]"
-                    )}
-                  >
-                    {card ? (
-                      <>
-                        {card.imageUrl ? (
-                          <div
-                            className="flex-1 w-full bg-cover bg-center"
-                            style={{ backgroundImage: `url(${card.imageUrl})` }}
-                          />
-                        ) : (
-                          <div className="flex-1 w-full bg-[#151515] flex items-center justify-center p-1">
-                            <span className="font-mono text-[8px] sm:text-[10px] text-center text-muted-foreground leading-tight">
-                              {card.name}
-                            </span>
+                  return (
+                    <button
+                      key={slotNumber}
+                      onClick={() =>
+                        card ? setSelectedCardId(card.id) : setSelectedSlot(slotNumber)
+                      }
+                      className={cn(
+                        "relative group rounded-lg overflow-hidden aspect-[2.5/3.5] transition-all duration-200 flex flex-col w-full h-full",
+                        card
+                          ? "border-2 border-primary/30 hover:border-primary bg-background hover:scale-[1.02] shadow-[0_0_10px_rgba(0,255,255,0.05)] hover:shadow-[0_0_16px_rgba(0,255,255,0.2)] active:scale-[1.01]"
+                          : "border border-dashed border-border hover:border-muted-foreground bg-background/40 opacity-60 hover:opacity-100 flex items-center justify-center active:opacity-80",
+                        isHighlighted &&
+                          "!border-primary border-2 z-10 animate-[slot-pop_2.4s_ease-out] shadow-[0_0_22px_rgba(0,255,255,0.55)]"
+                      )}
+                    >
+                      {card ? (
+                        <>
+                          {card.imageUrl ? (
+                            <div
+                              className="flex-1 w-full bg-cover bg-center transition-transform duration-300 group-hover:scale-105"
+                              style={{ backgroundImage: `url(${card.imageUrl})` }}
+                            />
+                          ) : (
+                            <div className="flex-1 w-full bg-[#151515] flex items-center justify-center p-1">
+                              <span className="font-mono text-[8px] sm:text-[10px] text-center text-muted-foreground leading-tight">
+                                {card.name}
+                              </span>
+                            </div>
+                          )}
+                          <div className="shrink-0 w-full bg-card border-t border-border flex flex-col justify-center px-1 sm:px-2 py-0.5 sm:py-1">
+                            <div className="flex justify-between items-center w-full">
+                              <span className="font-mono text-[7px] sm:text-[9px] text-muted-foreground">
+                                {String(slotNumber).padStart(3, "0")}/{binder.setTotal}
+                              </span>
+                              <span className="font-mono text-[7px] sm:text-[9px] font-bold text-primary">
+                                £{card.currentPriceGBP.toFixed(2)}
+                              </span>
+                            </div>
+                            <div className="text-[6px] sm:text-[8px] uppercase tracking-wider text-muted-foreground truncate">
+                              {card.condition}
+                            </div>
                           </div>
-                        )}
-                        <div className="shrink-0 w-full bg-card border-t border-border flex flex-col justify-center px-1 sm:px-2 py-0.5 sm:py-1">
-                          <div className="flex justify-between items-center w-full">
-                            <span className="font-mono text-[7px] sm:text-[9px] text-muted-foreground">
-                              {String(slotNumber).padStart(3, "0")}/{binder.setTotal}
-                            </span>
-                            <span className="font-mono text-[7px] sm:text-[9px] font-bold text-primary">
-                              £{card.currentPriceGBP.toFixed(2)}
-                            </span>
-                          </div>
-                          <div className="text-[6px] sm:text-[8px] uppercase tracking-wider text-muted-foreground truncate">
-                            {card.condition}
-                          </div>
+                        </>
+                      ) : (
+                        <div className="flex flex-col items-center gap-0.5 sm:gap-1 p-1">
+                          <span className="font-mono text-sm sm:text-xl text-muted-foreground/30 font-bold">
+                            {String(slotNumber).padStart(3, "0")}
+                          </span>
+                          <span className="font-mono text-[7px] sm:text-[9px] text-muted-foreground/40 uppercase">
+                            Empty
+                          </span>
                         </div>
-                      </>
-                    ) : (
-                      <div className="flex flex-col items-center gap-0.5 sm:gap-1 p-1">
-                        <span className="font-mono text-sm sm:text-xl text-muted-foreground/30 font-bold">
-                          {String(slotNumber).padStart(3, "0")}
-                        </span>
-                        <span className="font-mono text-[7px] sm:text-[9px] text-muted-foreground/40 uppercase">
-                          Empty
-                        </span>
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </motion.div>
+            </AnimatePresence>
 
             {/* Page nav */}
             <div className="flex justify-between items-center mt-2 sm:mt-4 pt-2 sm:pt-4 border-t border-border/50 shrink-0">
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setCurrentPage((p) => Math.max(0, p - 1))}
+                onClick={() => paginate(-1)}
                 disabled={currentPage === 0}
                 className="font-mono uppercase text-[10px] sm:text-xs gap-1 sm:gap-2 h-7 sm:h-8 px-2 sm:px-3"
               >
                 <ChevronLeft className="w-3 h-3" /> Prev
               </Button>
-              <div className="font-mono text-[10px] sm:text-xs text-muted-foreground uppercase tracking-widest">
+              <div className="font-mono text-[10px] sm:text-xs text-muted-foreground uppercase tracking-widest select-none">
                 {currentPage + 1} / {totalPages || 1}
               </div>
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setCurrentPage((p) => Math.min(totalPages - 1, p + 1))}
+                onClick={() => paginate(1)}
                 disabled={currentPage >= totalPages - 1}
                 className="font-mono uppercase text-[10px] sm:text-xs gap-1 sm:gap-2 h-7 sm:h-8 px-2 sm:px-3"
               >

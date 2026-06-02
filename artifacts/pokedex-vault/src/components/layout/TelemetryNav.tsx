@@ -1,11 +1,13 @@
 import { useGetVaultStats, getGetVaultStatsQueryKey } from "@workspace/api-client-react";
-import { Link } from "wouter";
-import { ScanLine, Activity } from "lucide-react";
+import { Link, useLocation } from "wouter";
+import { ScanLine, Activity, LayoutGrid } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export function TelemetryNav() {
   const { data: stats } = useGetVaultStats({
     query: { queryKey: getGetVaultStatsQueryKey() }
   });
+  const [location] = useLocation();
 
   return (
     <nav className="sticky top-0 z-50 w-full border-b border-sidebar-border bg-sidebar/95 backdrop-blur-md">
@@ -41,15 +43,30 @@ export function TelemetryNav() {
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Scan button */}
-        <Link
-          href="/scan"
-          className="flex items-center justify-center gap-1.5 rounded border border-primary text-primary bg-primary/5 hover:bg-primary/15 active:bg-primary/20 transition-colors px-3 sm:px-4 py-2 text-xs font-mono uppercase tracking-wider shrink-0 h-9 sm:h-10"
-        >
-          <ScanLine className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-          <span className="hidden xs:inline sm:inline">Scan</span>
-          <span className="hidden sm:inline"> Card</span>
-        </Link>
+        {/* Nav links */}
+        <div className="flex items-center gap-2">
+          <Link
+            href="/collection"
+            className={cn(
+              "flex items-center justify-center gap-1.5 rounded border transition-colors px-2.5 sm:px-3 py-2 text-xs font-mono uppercase tracking-wider shrink-0 h-9 sm:h-10",
+              location === "/collection"
+                ? "border-primary/60 text-primary bg-primary/10"
+                : "border-border text-muted-foreground bg-transparent hover:border-primary/40 hover:text-primary hover:bg-primary/5"
+            )}
+          >
+            <LayoutGrid className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Collection</span>
+          </Link>
+
+          <Link
+            href="/scan"
+            className="flex items-center justify-center gap-1.5 rounded border border-primary text-primary bg-primary/5 hover:bg-primary/15 active:bg-primary/20 transition-colors px-3 sm:px-4 py-2 text-xs font-mono uppercase tracking-wider shrink-0 h-9 sm:h-10"
+          >
+            <ScanLine className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            <span className="hidden xs:inline sm:inline">Scan</span>
+            <span className="hidden sm:inline"> Card</span>
+          </Link>
+        </div>
       </div>
     </nav>
   );

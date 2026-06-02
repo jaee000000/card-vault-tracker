@@ -8,6 +8,7 @@ import { TelemetryNav } from "@/components/layout/TelemetryNav";
 import Dashboard from "@/pages/Dashboard";
 import BinderView from "@/pages/BinderView";
 import Scanner from "@/pages/Scanner";
+import Collection from "@/pages/Collection";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -24,6 +25,7 @@ function Router() {
       <Route path="/" component={Dashboard} />
       <Route path="/binder/:id" component={BinderView} />
       <Route path="/scan" component={Scanner} />
+      <Route path="/collection" component={Collection} />
       <Route component={NotFound} />
     </Switch>
   );

@@ -237,6 +237,22 @@ router.get("/quick-look", async (_req, res) => {
   res.json(result);
 });
 
+router.get("/collection", async (_req, res) => {
+  const [cards, binders] = await Promise.all([
+    db.select().from(cardsTable),
+    db.select().from(bindersTable),
+  ]);
+  const binderMap = new Map(binders.map((b) => [b.id, b]));
+  const result = cards
+    .map((c) => {
+      const formatted = formatCard(c);
+      const binder = binderMap.get(c.assignedBinderId);
+      return { ...formatted, binderName: binder?.name ?? null, binderSetCode: binder?.setCode ?? null };
+    })
+    .sort((a, b) => b.currentPriceGBP - a.currentPriceGBP);
+  res.json(result);
+});
+
 router.get("/:id", async (req, res) => {
   const parse = GetCardParams.safeParse({ id: Number(req.params.id) });
   if (!parse.success) {
