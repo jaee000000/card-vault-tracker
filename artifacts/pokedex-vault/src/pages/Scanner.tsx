@@ -35,13 +35,28 @@ interface ScanResult {
   priceNote?: string | null;
 }
 
+/** Full-frame capture, downscaled to max 1024px wide for fast upload */
 function captureFrame(video: HTMLVideoElement): string {
+  const MAX = 1024;
+  let w = video.videoWidth, h = video.videoHeight;
+  if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; }
   const canvas = document.createElement("canvas");
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  const ctx = canvas.getContext("2d")!;
-  ctx.drawImage(video, 0, 0);
-  return canvas.toDataURL("image/jpeg", 0.92);
+  canvas.width = w; canvas.height = h;
+  canvas.getContext("2d")!.drawImage(video, 0, 0, w, h);
+  return canvas.toDataURL("image/jpeg", 0.82);
+}
+
+/** Crop the bottom 35% of the frame (where set number lives) and upscale 2× for legibility */
+function captureBottomCrop(video: HTMLVideoElement): string {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const cropY = Math.floor(vh * 0.60);   // start at 60% down
+  const cropH = vh - cropY;               // = bottom 40%
+  const OUT_W = Math.min(vw * 2, 1600);
+  const OUT_H = Math.round(OUT_W * cropH / vw);
+  const canvas = document.createElement("canvas");
+  canvas.width = OUT_W; canvas.height = OUT_H;
+  canvas.getContext("2d")!.drawImage(video, 0, cropY, vw, cropH, 0, 0, OUT_W, OUT_H);
+  return canvas.toDataURL("image/jpeg", 0.95); // high quality — text reading
 }
 
 export default function Scanner() {
@@ -118,11 +133,12 @@ export default function Scanner() {
 
     try {
       const imageBase64 = captureFrame(videoRef.current);
+      const bottomCropBase64 = captureBottomCrop(videoRef.current);
 
       const res = await fetch("/api/scan/identify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageBase64 }),
+        body: JSON.stringify({ imageBase64, bottomCropBase64 }),
       });
 
       const data = await res.json() as ScanResult & { error?: string; reason?: string; detail?: string };
