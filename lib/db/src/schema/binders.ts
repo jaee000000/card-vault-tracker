@@ -4,6 +4,7 @@ import { z } from "zod/v4";
 
 export const bindersTable = pgTable("binders", {
   id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(),
   name: text("name").notNull(),
   setCode: text("set_code").notNull(),
   setTotal: integer("set_total").notNull(),

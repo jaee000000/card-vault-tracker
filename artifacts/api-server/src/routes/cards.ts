@@ -1,7 +1,7 @@
 import { Router } from "express";
 import OpenAI from "openai";
 import { db, cardsTable, bindersTable } from "@workspace/db";
-import { eq, or, isNull } from "drizzle-orm";
+import { and, eq, or, isNull } from "drizzle-orm";
 import { findCardImage, priceChartingLookup, webSearchRawPriceGBP, webSearchOfficialImage, limitlessJpImageUrl, isJapaneseSet } from "./scan";
 import {
   CreateCardBody,
@@ -119,10 +119,14 @@ router.get("/", async (req, res) => {
     res.status(400).json({ error: "Invalid params" });
     return;
   }
-  const query = db.select().from(cardsTable);
+  const userId = req.userId!;
   const cards = parse.data.binderId
-    ? await query.where(eq(cardsTable.assignedBinderId, parse.data.binderId)).orderBy(cardsTable.setNumber)
-    : await query.orderBy(cardsTable.setNumber);
+    ? await db
+        .select()
+        .from(cardsTable)
+        .where(and(eq(cardsTable.userId, userId), eq(cardsTable.assignedBinderId, parse.data.binderId)))
+        .orderBy(cardsTable.setNumber)
+    : await db.select().from(cardsTable).where(eq(cardsTable.userId, userId)).orderBy(cardsTable.setNumber);
   res.json(cards.map(formatCard));
 });
 
@@ -132,9 +136,13 @@ router.post("/", async (req, res) => {
     res.status(400).json({ error: parse.error.message });
     return;
   }
+  const userId = req.userId!;
   const { name, setNumber, setTotal, assignedBinderId, condition, currentPriceGBP, psa10GBP, bgs10GBP, imageUrl } = parse.data;
 
-  const [binder] = await db.select().from(bindersTable).where(eq(bindersTable.id, assignedBinderId));
+  const [binder] = await db
+    .select()
+    .from(bindersTable)
+    .where(and(eq(bindersTable.id, assignedBinderId), eq(bindersTable.userId, userId)));
   if (!binder) {
     res.status(400).json({ error: "Binder not found" });
     return;
@@ -177,6 +185,7 @@ router.post("/", async (req, res) => {
   const [card] = await db
     .insert(cardsTable)
     .values({
+      userId,
       name,
       setNumber,
       setTotal,
@@ -194,9 +203,10 @@ router.post("/", async (req, res) => {
   res.status(201).json(formatCard(card));
 });
 
-router.post("/resync-all", async (_req, res) => {
-  const cards = await db.select().from(cardsTable);
-  const binders = await db.select().from(bindersTable);
+router.post("/resync-all", async (req, res) => {
+  const userId = req.userId!;
+  const cards = await db.select().from(cardsTable).where(eq(cardsTable.userId, userId));
+  const binders = await db.select().from(bindersTable).where(eq(bindersTable.userId, userId));
   const binderMap = new Map(binders.map(b => [b.id, b.setCode]));
 
   let updated = 0;
@@ -207,7 +217,7 @@ router.post("/resync-all", async (_req, res) => {
       await db
         .update(cardsTable)
         .set({ currentPriceGBP: String(newPrice), lastPriceRefreshedAt: new Date() })
-        .where(eq(cardsTable.id, card.id));
+        .where(and(eq(cardsTable.id, card.id), eq(cardsTable.userId, userId)));
       updated++;
     } catch (e) {
       console.warn(`Failed to update price for card ${card.id}:`, e);
@@ -224,20 +234,12 @@ router.post("/resync-all", async (_req, res) => {
 
 // Backfill card images for any saved cards missing one
 router.post("/backfill-images", async (req, res) => {
-  // Admin-only bulk write. In production require a matching ADMIN_TOKEN header;
-  // in development it stays open for local seeding convenience.
-  if (process.env.NODE_ENV === "production") {
-    const token = process.env.ADMIN_TOKEN;
-    if (!token || req.get("x-admin-token") !== token) {
-      res.status(403).json({ error: "Forbidden" });
-      return;
-    }
-  }
+  const userId = req.userId!;
   const cards = await db
     .select()
     .from(cardsTable)
-    .where(or(isNull(cardsTable.imageUrl), eq(cardsTable.imageUrl, "")));
-  const binders = await db.select().from(bindersTable);
+    .where(and(eq(cardsTable.userId, userId), or(isNull(cardsTable.imageUrl), eq(cardsTable.imageUrl, ""))));
+  const binders = await db.select().from(bindersTable).where(eq(bindersTable.userId, userId));
   const binderMap = new Map(binders.map((b) => [b.id, b.setCode]));
 
   let updated = 0;
@@ -261,7 +263,7 @@ router.post("/backfill-images", async (req, res) => {
               ? { currentPriceGBP: String(priceGBP), lastPriceRefreshedAt: new Date() }
               : {}),
           })
-          .where(eq(cardsTable.id, card.id));
+          .where(and(eq(cardsTable.id, card.id), eq(cardsTable.userId, userId)));
         updated++;
       } else {
         failures.push(`${card.name} (${card.setNumber}/${card.setTotal})`);
@@ -278,8 +280,9 @@ router.post("/backfill-images", async (req, res) => {
 // sorted by PSA 10 value (highest → lowest). Missing/stale graded values are
 // estimated on demand with limited concurrency, then cached for next time.
 // NOTE: must be registered before "/:id" so it isn't captured as an id param.
-router.get("/quick-look", async (_req, res) => {
-  const cards = await db.select().from(cardsTable);
+router.get("/quick-look", async (req, res) => {
+  const userId = req.userId!;
+  const cards = await db.select().from(cardsTable).where(eq(cardsTable.userId, userId));
   const stale = cards.filter(gradedIsStale);
 
   const CONCURRENCY = 4;
@@ -295,8 +298,8 @@ router.get("/quick-look", async (_req, res) => {
     );
   }
 
-  const fresh = await db.select().from(cardsTable);
-  const binders = await db.select().from(bindersTable);
+  const fresh = await db.select().from(cardsTable).where(eq(cardsTable.userId, userId));
+  const binders = await db.select().from(bindersTable).where(eq(bindersTable.userId, userId));
   const binderMap = new Map(binders.map((b) => [b.id, b]));
 
   const result = fresh
@@ -312,10 +315,11 @@ router.get("/quick-look", async (_req, res) => {
   res.json(result);
 });
 
-router.get("/collection", async (_req, res) => {
+router.get("/collection", async (req, res) => {
+  const userId = req.userId!;
   const [cards, binders] = await Promise.all([
-    db.select().from(cardsTable),
-    db.select().from(bindersTable),
+    db.select().from(cardsTable).where(eq(cardsTable.userId, userId)),
+    db.select().from(bindersTable).where(eq(bindersTable.userId, userId)),
   ]);
   const binderMap = new Map(binders.map((b) => [b.id, b]));
   const result = cards
@@ -329,12 +333,16 @@ router.get("/collection", async (_req, res) => {
 });
 
 router.get("/:id", async (req, res) => {
+  const userId = req.userId!;
   const parse = GetCardParams.safeParse({ id: Number(req.params.id) });
   if (!parse.success) {
     res.status(400).json({ error: "Invalid id" });
     return;
   }
-  const [card] = await db.select().from(cardsTable).where(eq(cardsTable.id, parse.data.id));
+  const [card] = await db
+    .select()
+    .from(cardsTable)
+    .where(and(eq(cardsTable.id, parse.data.id), eq(cardsTable.userId, userId)));
   if (!card) {
     res.status(404).json({ error: "Card not found" });
     return;
@@ -343,6 +351,7 @@ router.get("/:id", async (req, res) => {
 });
 
 router.patch("/:id", async (req, res) => {
+  const userId = req.userId!;
   const parse = UpdateCardParams.safeParse({ id: Number(req.params.id) });
   if (!parse.success) {
     res.status(400).json({ error: "Invalid id" });
@@ -359,7 +368,11 @@ router.patch("/:id", async (req, res) => {
   if (bodyParse.data.currentPriceGBP !== undefined) updates.currentPriceGBP = String(bodyParse.data.currentPriceGBP);
   if (bodyParse.data.imageUrl !== undefined) updates.imageUrl = bodyParse.data.imageUrl;
 
-  const [updated] = await db.update(cardsTable).set(updates).where(eq(cardsTable.id, parse.data.id)).returning();
+  const [updated] = await db
+    .update(cardsTable)
+    .set(updates)
+    .where(and(eq(cardsTable.id, parse.data.id), eq(cardsTable.userId, userId)))
+    .returning();
   if (!updated) {
     res.status(404).json({ error: "Card not found" });
     return;
@@ -368,12 +381,15 @@ router.patch("/:id", async (req, res) => {
 });
 
 router.delete("/:id", async (req, res) => {
+  const userId = req.userId!;
   const parse = DeleteCardParams.safeParse({ id: Number(req.params.id) });
   if (!parse.success) {
     res.status(400).json({ error: "Invalid id" });
     return;
   }
-  await db.delete(cardsTable).where(eq(cardsTable.id, parse.data.id));
+  await db
+    .delete(cardsTable)
+    .where(and(eq(cardsTable.id, parse.data.id), eq(cardsTable.userId, userId)));
   res.status(204).send();
 });
 
@@ -572,27 +588,34 @@ type EnsuredGraded = {
   source: "cached" | "pricecharting" | "web-search" | "ai-estimate";
 };
 
-async function ensureGradedValues(card: typeof cardsTable.$inferSelect): Promise<EnsuredGraded> {
+async function ensureGradedValues(card: typeof cardsTable.$inferSelect, userId: string): Promise<EnsuredGraded> {
   if (!gradedIsStale(card)) {
     return { card, confidence: "medium", source: "cached" };
   }
-  const [binder] = await db.select().from(bindersTable).where(eq(bindersTable.id, card.assignedBinderId));
+  const [binder] = await db
+    .select()
+    .from(bindersTable)
+    .where(and(eq(bindersTable.id, card.assignedBinderId), eq(bindersTable.userId, userId)));
   const est = await estimateGradedValues(card, binder);
   const [updated] = await db
     .update(cardsTable)
     .set({ psa10GBP: String(est.psa10), bgs10GBP: String(est.bgs10), gradedRefreshedAt: new Date() })
-    .where(eq(cardsTable.id, card.id))
+    .where(and(eq(cardsTable.id, card.id), eq(cardsTable.userId, userId)))
     .returning();
   return { card: updated, confidence: est.confidence, source: est.source };
 }
 
 router.get("/:id/graded-values", async (req, res) => {
+  const userId = req.userId!;
   const parse = GetCardParams.safeParse({ id: Number(req.params.id) });
   if (!parse.success) {
     res.status(400).json({ error: "Invalid id" });
     return;
   }
-  const [card] = await db.select().from(cardsTable).where(eq(cardsTable.id, parse.data.id));
+  const [card] = await db
+    .select()
+    .from(cardsTable)
+    .where(and(eq(cardsTable.id, parse.data.id), eq(cardsTable.userId, userId)));
   if (!card) {
     res.status(404).json({ error: "Card not found" });
     return;
@@ -600,7 +623,7 @@ router.get("/:id/graded-values", async (req, res) => {
   const raw = Number(card.currentPriceGBP);
 
   try {
-    const { card: updated, confidence, source } = await ensureGradedValues(card);
+    const { card: updated, confidence, source } = await ensureGradedValues(card, userId);
     res.json({
       raw: parseFloat(raw.toFixed(2)),
       psa10: Number(updated.psa10GBP),
@@ -620,22 +643,29 @@ router.get("/:id/graded-values", async (req, res) => {
 });
 
 router.post("/:id/refresh-price", async (req, res) => {
+  const userId = req.userId!;
   const parse = RefreshCardPriceParams.safeParse({ id: Number(req.params.id) });
   if (!parse.success) {
     res.status(400).json({ error: "Invalid id" });
     return;
   }
-  const [card] = await db.select().from(cardsTable).where(eq(cardsTable.id, parse.data.id));
+  const [card] = await db
+    .select()
+    .from(cardsTable)
+    .where(and(eq(cardsTable.id, parse.data.id), eq(cardsTable.userId, userId)));
   if (!card) {
     res.status(404).json({ error: "Card not found" });
     return;
   }
-  const [binder] = await db.select().from(bindersTable).where(eq(bindersTable.id, card.assignedBinderId));
+  const [binder] = await db
+    .select()
+    .from(bindersTable)
+    .where(and(eq(bindersTable.id, card.assignedBinderId), eq(bindersTable.userId, userId)));
   const newPrice = await fetchLivePriceGBP(card.name, card.setNumber, binder?.setCode, card.setTotal);
   const [updated] = await db
     .update(cardsTable)
     .set({ currentPriceGBP: String(newPrice), lastPriceRefreshedAt: new Date() })
-    .where(eq(cardsTable.id, card.id))
+    .where(and(eq(cardsTable.id, card.id), eq(cardsTable.userId, userId)))
     .returning();
   res.json(formatCard(updated));
 });
@@ -674,10 +704,15 @@ async function tcgHiResLookup(name: string, setNumber: number): Promise<string |
 
 // GET /api/cards/:id/hires-image — returns best hi-res URL, caches in DB
 router.get("/:id/hires-image", async (req, res) => {
+  const userId = req.userId!;
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "bad id" });
 
-  const [card] = await db.select().from(cardsTable).where(eq(cardsTable.id, id)).limit(1);
+  const [card] = await db
+    .select()
+    .from(cardsTable)
+    .where(and(eq(cardsTable.id, id), eq(cardsTable.userId, userId)))
+    .limit(1);
   if (!card) return res.status(404).json({ error: "not found" });
 
   // Already proper card-art? Return it unchanged and NEVER re-resolve. Re-running
@@ -708,14 +743,18 @@ router.get("/:id/hires-image", async (req, res) => {
     hiResUrl = await webSearchOfficialImage(card.name, card.setNumber, card.setTotal, binder?.setCode);
   }
   if (hiResUrl) {
-    await db.update(cardsTable).set({ imageUrl: hiResUrl }).where(eq(cardsTable.id, id));
+    await db
+      .update(cardsTable)
+      .set({ imageUrl: hiResUrl })
+      .where(and(eq(cardsTable.id, id), eq(cardsTable.userId, userId)));
   }
   return res.json({ hiResUrl: hiResUrl ?? card.imageUrl ?? null });
 });
 
 // POST /api/cards/upgrade-images — upgrades every card's image to PokéTCG hi-res in the background
-router.post("/upgrade-images", async (_req, res) => {
-  const allCards = await db.select().from(cardsTable);
+router.post("/upgrade-images", async (req, res) => {
+  const userId = req.userId!;
+  const allCards = await db.select().from(cardsTable).where(eq(cardsTable.userId, userId));
 
   // Respond immediately — upgrade runs async
   res.json({ message: "upgrade started", total: allCards.length });

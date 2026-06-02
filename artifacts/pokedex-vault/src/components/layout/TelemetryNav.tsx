@@ -1,13 +1,17 @@
 import { useGetVaultStats, getGetVaultStatsQueryKey } from "@workspace/api-client-react";
 import { Link, useLocation } from "wouter";
-import { ScanLine, Activity, LayoutGrid } from "lucide-react";
+import { ScanLine, Activity, LayoutGrid, LogOut } from "lucide-react";
+import { useClerk } from "@clerk/react";
 import { cn } from "@/lib/utils";
+
+const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export function TelemetryNav() {
   const { data: stats } = useGetVaultStats({
     query: { queryKey: getGetVaultStatsQueryKey() }
   });
   const [location] = useLocation();
+  const { signOut } = useClerk();
 
   return (
     <nav className="sticky top-0 z-50 w-full border-b border-sidebar-border bg-sidebar/95 backdrop-blur-md">
@@ -66,6 +70,16 @@ export function TelemetryNav() {
             <span className="hidden xs:inline sm:inline">Scan</span>
             <span className="hidden sm:inline"> Card</span>
           </Link>
+
+          <button
+            type="button"
+            onClick={() => signOut({ redirectUrl: basePath || "/" })}
+            title="Sign out"
+            className="flex items-center justify-center gap-1.5 rounded border border-border text-muted-foreground bg-transparent hover:border-destructive/50 hover:text-destructive transition-colors px-2.5 sm:px-3 py-2 text-xs font-mono uppercase tracking-wider shrink-0 h-9 sm:h-10"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Exit</span>
+          </button>
         </div>
       </div>
     </nav>

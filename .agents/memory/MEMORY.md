@@ -1,2 +1,3 @@
 - [PriceCharting card lookup](pricecharting-lookup.md) — scanner uses PriceCharting price1=raw (not price3); AI misreads name from artwork, fixed via top/bottom crops + prompt.
 - [Scrydex image URL safety](scrydex-safety.md) — never guess scrydex URLs from set_number; scrydex numbering differs from physical card numbering, causing wrong cards.
+- [Multi-tenant scoping audit](multitenant-scoping.md) — per-user retrofit must scope EVERY query incl. :id action sub-routes & shared helpers, not just CRUD; verify with testClerkAuth.

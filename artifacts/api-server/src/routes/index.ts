@@ -4,13 +4,14 @@ import bindersRouter from "./binders";
 import cardsRouter from "./cards";
 import statsRouter from "./stats";
 import scanRouter from "./scan";
+import { requireAuth } from "../middlewares/requireAuth";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
-router.use("/binders", bindersRouter);
-router.use("/cards", cardsRouter);
-router.use("/stats", statsRouter);
-router.use("/scan", scanRouter);
+router.use("/binders", requireAuth, bindersRouter);
+router.use("/cards", requireAuth, cardsRouter);
+router.use("/stats", requireAuth, statsRouter);
+router.use("/scan", requireAuth, scanRouter);
 
 export default router;

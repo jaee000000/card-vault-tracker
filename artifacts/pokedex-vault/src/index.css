@@ -1,3 +1,4 @@
+@layer theme, base, clerk, components, utilities;
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Rajdhani:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 @import "tw-animate-css";
@@ -265,4 +266,9 @@
   .border.hover-elevate:not(.no-hover-interaction-elevate)::after {
     inset: -1px;
   }
+}
+/* Clerk dark-input placeholder contrast */
+.cl-formFieldInput::placeholder {
+  color: hsl(215 20% 55%);
+  opacity: 1;
 }

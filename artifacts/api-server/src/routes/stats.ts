@@ -1,17 +1,19 @@
 import { Router } from "express";
 import { db, bindersTable, cardsTable } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { GetBinderStatsParams } from "@workspace/api-zod";
 
 const router = Router();
 
-router.get("/vault", async (_req, res) => {
+router.get("/vault", async (req, res) => {
+  const userId = req.userId!;
   const [vaultRow] = await db
     .select({
       totalValueGBP: sql<string>`COALESCE(SUM(${cardsTable.currentPriceGBP}), 0)`,
       totalCards: sql<number>`COUNT(${cardsTable.id})::int`,
     })
-    .from(cardsTable);
+    .from(cardsTable)
+    .where(eq(cardsTable.userId, userId));
 
   const binders = await db
     .select({
@@ -21,6 +23,7 @@ router.get("/vault", async (_req, res) => {
     })
     .from(bindersTable)
     .leftJoin(cardsTable, eq(cardsTable.assignedBinderId, bindersTable.id))
+    .where(eq(bindersTable.userId, userId))
     .groupBy(bindersTable.id, bindersTable.setTotal);
 
   const completedSets = binders.filter((b) => Number(b.scannedCards) >= b.setTotal).length;
@@ -38,6 +41,7 @@ router.get("/vault", async (_req, res) => {
 });
 
 router.get("/binder/:id", async (req, res) => {
+  const userId = req.userId!;
   const parse = GetBinderStatsParams.safeParse({ id: Number(req.params.id) });
   if (!parse.success) {
     res.status(400).json({ error: "Invalid id" });
@@ -45,7 +49,10 @@ router.get("/binder/:id", async (req, res) => {
   }
   const { id } = parse.data;
 
-  const [binder] = await db.select().from(bindersTable).where(eq(bindersTable.id, id));
+  const [binder] = await db
+    .select()
+    .from(bindersTable)
+    .where(and(eq(bindersTable.id, id), eq(bindersTable.userId, userId)));
   if (!binder) {
     res.status(404).json({ error: "Binder not found" });
     return;
@@ -57,7 +64,7 @@ router.get("/binder/:id", async (req, res) => {
       totalValueGBP: sql<string>`COALESCE(SUM(${cardsTable.currentPriceGBP}), 0)`,
     })
     .from(cardsTable)
-    .where(eq(cardsTable.assignedBinderId, id));
+    .where(and(eq(cardsTable.assignedBinderId, id), eq(cardsTable.userId, userId)));
 
   const scannedCards = Number(statsRow.scannedCards);
   const completionPercent = binder.setTotal > 0 ? parseFloat(((scannedCards / binder.setTotal) * 100).toFixed(1)) : 0;

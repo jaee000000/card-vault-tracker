@@ -5,6 +5,7 @@ import { bindersTable } from "./binders";
 
 export const cardsTable = pgTable("cards", {
   id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(),
   name: text("name").notNull(),
   setNumber: integer("set_number").notNull(),
   setTotal: integer("set_total").notNull(),

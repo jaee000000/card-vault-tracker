@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { db, bindersTable, cardsTable, insertBinderSchema } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { db, bindersTable, cardsTable } from "@workspace/db";
+import { and, eq } from "drizzle-orm";
 import {
   CreateBinderBody,
   UpdateBinderBody,
@@ -11,8 +11,13 @@ import {
 
 const router = Router();
 
-router.get("/", async (_req, res) => {
-  const binders = await db.select().from(bindersTable).orderBy(bindersTable.createdAt);
+router.get("/", async (req, res) => {
+  const userId = req.userId!;
+  const binders = await db
+    .select()
+    .from(bindersTable)
+    .where(eq(bindersTable.userId, userId))
+    .orderBy(bindersTable.createdAt);
   res.json(
     binders.map((b) => ({
       ...b,
@@ -22,6 +27,7 @@ router.get("/", async (_req, res) => {
 });
 
 router.post("/", async (req, res) => {
+  const userId = req.userId!;
   const parse = CreateBinderBody.safeParse(req.body);
   if (!parse.success) {
     res.status(400).json({ error: parse.error.message });
@@ -30,24 +36,32 @@ router.post("/", async (req, res) => {
   const { name, setCode, setTotal, coverImageUrl } = parse.data;
   const [binder] = await db
     .insert(bindersTable)
-    .values({ name, setCode, setTotal, coverImageUrl: coverImageUrl ?? null })
+    .values({ userId, name, setCode, setTotal, coverImageUrl: coverImageUrl ?? null })
     .returning();
   res.status(201).json({ ...binder, createdAt: binder.createdAt.toISOString() });
 });
 
 router.get("/:id", async (req, res) => {
+  const userId = req.userId!;
   const parse = GetBinderParams.safeParse({ id: Number(req.params.id) });
   if (!parse.success) {
     res.status(400).json({ error: "Invalid id" });
     return;
   }
   const { id } = parse.data;
-  const [binder] = await db.select().from(bindersTable).where(eq(bindersTable.id, id));
+  const [binder] = await db
+    .select()
+    .from(bindersTable)
+    .where(and(eq(bindersTable.id, id), eq(bindersTable.userId, userId)));
   if (!binder) {
     res.status(404).json({ error: "Binder not found" });
     return;
   }
-  const cards = await db.select().from(cardsTable).where(eq(cardsTable.assignedBinderId, id)).orderBy(cardsTable.setNumber);
+  const cards = await db
+    .select()
+    .from(cardsTable)
+    .where(and(eq(cardsTable.assignedBinderId, id), eq(cardsTable.userId, userId)))
+    .orderBy(cardsTable.setNumber);
   res.json({
     ...binder,
     createdAt: binder.createdAt.toISOString(),
@@ -61,6 +75,7 @@ router.get("/:id", async (req, res) => {
 });
 
 router.patch("/:id", async (req, res) => {
+  const userId = req.userId!;
   const parse = UpdateBinderParams.safeParse({ id: Number(req.params.id) });
   if (!parse.success) {
     res.status(400).json({ error: "Invalid id" });
@@ -74,7 +89,11 @@ router.patch("/:id", async (req, res) => {
   const updates: Record<string, unknown> = {};
   if (bodyParse.data.name !== undefined) updates.name = bodyParse.data.name;
   if (bodyParse.data.coverImageUrl !== undefined) updates.coverImageUrl = bodyParse.data.coverImageUrl;
-  const [updated] = await db.update(bindersTable).set(updates).where(eq(bindersTable.id, parse.data.id)).returning();
+  const [updated] = await db
+    .update(bindersTable)
+    .set(updates)
+    .where(and(eq(bindersTable.id, parse.data.id), eq(bindersTable.userId, userId)))
+    .returning();
   if (!updated) {
     res.status(404).json({ error: "Binder not found" });
     return;
@@ -83,12 +102,15 @@ router.patch("/:id", async (req, res) => {
 });
 
 router.delete("/:id", async (req, res) => {
+  const userId = req.userId!;
   const parse = DeleteBinderParams.safeParse({ id: Number(req.params.id) });
   if (!parse.success) {
     res.status(400).json({ error: "Invalid id" });
     return;
   }
-  await db.delete(bindersTable).where(eq(bindersTable.id, parse.data.id));
+  await db
+    .delete(bindersTable)
+    .where(and(eq(bindersTable.id, parse.data.id), eq(bindersTable.userId, userId)));
   res.status(204).send();
 });
 
