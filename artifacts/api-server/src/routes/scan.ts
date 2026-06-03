@@ -847,7 +847,7 @@ router.post("/identify", async (req, res) => {
       image_url: { url: toDataUri(topCropBase64), detail: "high" },
     });
     imgDesc.push(
-      `Image ${imgN} is a 2× zoomed crop of the card's TOP. READ the Pokémon's printed NAME from this text, character by character. Do NOT guess the species from the artwork — read the literal printed name.`
+      `Image ${imgN} is a 2× zoomed crop of the card's TOP. READ the card's printed NAME from this text, character by character (a Pokémon species, or a Trainer card's title). Do NOT guess from the artwork — read the literal printed name.`
     );
     imgN++;
   }
@@ -877,11 +877,20 @@ router.post("/identify", async (req, res) => {
           content: `You are a Pokémon TCG card scanner. Read ONLY what is literally printed on the card — do NOT guess or use memory.
 
 Extract these 5 fields:
-1. name — the Pokémon name as the OFFICIAL ENGLISH species name. You MUST read this from the printed name text at the TOP of the card (use the zoomed top crop). NEVER identify the Pokémon from its artwork — many Pokémon look alike (e.g. ice/snow Pokémon). Read the printed characters literally and translate to the real English name:
-   - Use the official English species name, NEVER romaji: "カイリュー"→"Dragonite" (NOT "Kairyu"), "ゲッコウガ"→"Greninja" (NOT "Gekkouga"), "ガブリアス"→"Garchomp", "ゲンガー"→"Gengar"
+1. name — the card's name in OFFICIAL ENGLISH. You MUST read this from the printed name text at the TOP of the card (use the zoomed top crop). NEVER identify the card from its artwork. Read the printed characters literally and translate.
+
+   FIRST decide the card type from the top of the card:
+   • POKÉMON card — shows HP and an evolution stage; the name is a Pokémon species.
+   • TRAINER card — marked "トレーナーズ" / "Trainer" across the top, with a subtype label such as サポート/Supporter, グッズ/Item, スタジアム/Stadium, or ポケモンのどうぐ/Pokémon Tool. Its name is a PERSON, PLACE, or ITEM — NOT a Pokémon. Trainer cards (from any Japanese or English set) are FULLY SUPPORTED — identify them like any other card and NEVER return an error just because the card is not a Pokémon.
+
+   POKÉMON cards — use the official English species name, NEVER romaji: "カイリュー"→"Dragonite" (NOT "Kairyu"), "ゲッコウガ"→"Greninja" (NOT "Gekkouga"), "ガブリアス"→"Garchomp", "ゲンガー"→"Gengar"
    - More examples: "ドンメル"→"Numel", "リザードン"→"Charizard", "ユキメノコ"→"Froslass", "ユキノオー"→"Abomasnow"
    - Keep the "メガ"/"Mega" prefix and the "ex"/"GX"/"V"/"VMAX"/"VSTAR" suffix EXACTLY as printed: "メガユキメノコex"→"Mega Froslass ex", "メガカイリューex"→"Mega Dragonite ex", "リザードンex"→"Charizard ex"
    - TRAINER'S POKÉMON: if a Trainer name in the possessive form (ending in "の" = "'s") is printed BEFORE the Pokémon name, you MUST include it as "{Trainer}'s {Pokémon}". This is critical — omitting it identifies a completely different card. Translate the trainer name to English: "シロナ"→"Cynthia", "カスミ"→"Misty", "サカキ"→"Giovanni", "ナンジャモ"→"Iono", "マリィ"→"Marnie", "リーリエ"→"Lillie", "ハウ"→"Hau", "グズマ"→"Guzma", "アカギ"→"Cyrus", "N"→"N". Examples: "シロナのミカルゲ"→"Cynthia's Spiritomb", "カスミのコダック"→"Misty's Psyduck", "サカキのニドキング"→"Giovanni's Nidoking".
+
+   TRAINER cards — read the printed title and translate it to its official English card name (your translation is price-checked downstream, so be as accurate as you can; if unsure, give the closest official English name):
+   - "と" joining two names usually maps to " & " — keep BOTH names: "バーベナとヘレナ"→"Verbena & Helena". Prefer the official English title if you know it; otherwise use " & ". Never drop or merge a name.
+   - Well-known examples: "ナンジャモ"→"Iono", "ボスの指令"→"Boss's Orders", "博士の研究"→"Professor's Research", "ハイパーボール"→"Ultra Ball", "クイックボール"→"Quick Ball", "ネストボール"→"Nest Ball", "モンスターボール"→"Poké Ball", "ふしぎなアメ"→"Rare Candy", "すごいつりざお"→"Super Rod".
 2. setNumber — integer BEFORE the slash (e.g. 224 from "224/193")
 3. setTotal — integer AFTER the slash (e.g. 193 from "224/193")
 4. setId — the small set code near those numbers. Read each character individually.
@@ -892,15 +901,17 @@ Extract these 5 fields:
 
 CRITICAL:
 - The NAME comes from the printed TEXT at the top, NOT from the artwork. If the text says "ユキメノコ" (Froslass) but the picture looks like another snow Pokémon, the name is Froslass.
+- Trainer cards (Supporter / Item / Stadium / Pokémon Tool) are fully supported. Read and translate their printed title — do NOT return an error simply because the card is a Trainer card and has no Pokémon.
 - Read the EXACT digits of setNumber and setTotal. Do not substitute numbers from memory.
 - Read the EXACT set code character by character. "m2a" ≠ "sv2a" ≠ "sv1a". "m4" ≠ "xy4".
-- For AR/SAR/MA cards, setNumber exceeds setTotal (e.g. 224/193). This is normal — report it exactly.
+- For AR/SAR/MA/SR cards, setNumber exceeds setTotal (e.g. 224/193). This is normal — report it exactly.
 - Set confidence to "low" if any part is unclear.
 
-Output ONLY valid JSON, no markdown:
-{"name":"Mega Froslass ex","setNumber":224,"setTotal":193,"setId":"m2a","rarity":"MA","confidence":"high"}
+Output ONLY valid JSON, no markdown. Examples:
+Pokémon — {"name":"Mega Froslass ex","setNumber":224,"setTotal":193,"setId":"m2a","rarity":"MA","confidence":"high"}
+Trainer — {"name":"Verbena & Helena","setNumber":221,"setTotal":193,"setId":"sv2a","rarity":"SR","confidence":"high"}
 
-If the card cannot be identified at all:
+Only if the printed text is genuinely illegible (blurry, glare, cropped) — NEVER merely because it is a Trainer card:
 {"error":"Cannot identify card","reason":"brief reason"}`,
         },
         { role: "user", content: userContent },
