@@ -1,9 +1,8 @@
 [phases.build]
-cmds = ["cd artifacts/api-server && pnpm install --no-frozen-lockfile", "cd artifacts/api-server && pnpm run build"]
+cmds = ["cd artifacts/api-server && pnpm install", "cd artifacts/api-server && pnpm run build"]
 
 [phases.start]
 cmds = ["cd artifacts/api-server && pnpm run start"]
 
-[variables]
-PORT = "3000"
-NODE_ENV = "production"
+[start]
+cmd = "cd artifacts/api-server && pnpm run start"
