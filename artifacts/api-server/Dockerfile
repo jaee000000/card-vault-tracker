@@ -7,8 +7,6 @@ RUN npm install -g pnpm
 
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
-COPY ../../pnpm-workspace.yaml ../../pnpm-lock.yaml ./
-COPY ../../package.json ../../package.json ./
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile
@@ -29,8 +27,6 @@ RUN npm install -g pnpm
 
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
-COPY ../../pnpm-workspace.yaml ../../pnpm-lock.yaml ./
-COPY ../../package.json ../../package.json ./
 
 # Install production dependencies only
 RUN pnpm install --prod --frozen-lockfile
