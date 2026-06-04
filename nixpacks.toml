@@ -1,11 +1,5 @@
-[phases.setup]
-cmds = ["npm install -g pnpm"]
-
-[phases.install]
-cmds = ["pnpm install --no-frozen-lockfile"]
-
 [phases.build]
-cmds = ["pnpm run railway-build"]
+cmds = ["npm install -g pnpm", "pnpm install --no-frozen-lockfile", "pnpm run railway-build"]
 
 [phases.start]
 cmds = ["pnpm run start"]
