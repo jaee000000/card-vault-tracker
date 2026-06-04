@@ -1,5 +1,8 @@
+[phases.install]
+cmds = ["pnpm install --no-frozen-lockfile"]
+
 [phases.build]
-cmds = ["pnpm install", "pnpm run railway-build"]
+cmds = ["pnpm run railway-build"]
 
 [phases.start]
 cmds = ["pnpm run start"]
