@@ -150,6 +150,9 @@ export default function Dashboard() {
     query: { queryKey: getListBindersQueryKey() },
   });
 
+  // Ensure binders is always an array
+  const bindersArray = Array.isArray(binders) ? binders : [];
+
   const { data: stats } = useGetVaultStats({
     query: { queryKey: getGetVaultStatsQueryKey() },
   });
@@ -261,7 +264,7 @@ export default function Dashboard() {
             <div key={i} className="h-36 sm:h-48 rounded-xl border border-border/50 bg-card/50 animate-pulse" />
           ))}
         </div>
-      ) : binders?.length === 0 ? (
+      ) : bindersArray.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-48 sm:h-64 rounded-xl border border-dashed border-border/50 bg-card/20">
           <Folder className="w-10 h-10 text-muted-foreground mb-3 opacity-50" />
           <p className="text-muted-foreground font-mono text-sm">No binders yet.</p>
@@ -271,7 +274,7 @@ export default function Dashboard() {
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-6">
-          {binders?.map((binder) => (
+          {bindersArray.map((binder) => (
             <Link
               key={binder.id}
               href={`/binder/${binder.id}`}

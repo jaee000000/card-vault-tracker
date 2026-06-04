@@ -13,7 +13,7 @@ async function refreshAllPrices(): Promise<void> {
   try {
     const cards = await db.select().from(cardsTable);
     const binders = await db.select().from(bindersTable);
-    const binderMap = new Map(binders.map((b) => [b.id, b.setCode]));
+    const binderMap = new Map(binders.map((b: typeof bindersTable.$inferSelect) => [b.id, b.setCode]));
 
     const now = Date.now();
     let updated = 0;
@@ -27,8 +27,8 @@ async function refreshAllPrices(): Promise<void> {
           continue;
         }
 
-        const setCode = binderMap.get(card.assignedBinderId) ?? undefined;
-        const newPrice = await fetchLivePriceGBP(card.name, card.setNumber, setCode);
+        const setCode = binderMap.get(card.assignedBinderId);
+        const newPrice = await fetchLivePriceGBP(card.name, card.setNumber, setCode && typeof setCode === 'string' ? setCode : undefined, card.setTotal);
 
         if (newPrice > 0) {
           await db
